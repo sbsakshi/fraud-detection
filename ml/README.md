@@ -58,7 +58,80 @@ Rows reference accounts by `upi_id` / transactions by natural keys rather
 than the backend's integer primary keys, since those are assigned by
 Postgres at insert time — a later loader/replay step resolves them.
 
-## Phase 4 — model training (not started)
+## Phase 4 — model training (done)
 
-Feature engineering, model training notebooks, and exported model artifacts
-(XGBoost, Random Forest, Isolation Forest) land here.
+`features/` turns the Phase 2 synthetic dataset into a labeled feature
+table; `notebooks/model_training.ipynb` trains on it and exports the
+artifacts `backend/app/ml` loads at startup.
+
+```bash
+# from the repo root, using ml/.venv (pip install -r ml/requirements-dev.txt
+# for jupyter/pytest on top of ml/requirements.txt)
+ml/.venv/Scripts/python.exe -m ml.features.build_features   # -> ml/data/features.csv
+ml/.venv/Scripts/python.exe -m pytest ml/tests/
+ml/.venv/Scripts/python.exe -m jupyter lab                  # open notebooks/model_training.ipynb
+```
+
+### Features
+
+`features/engineering.py` does one chronological pass over
+`transactions.csv`, computing every feature from account/device state built
+up by transactions strictly *before* the one being scored -- the same
+no-peeking-at-the-future discipline `backend/app/rules` uses, so training
+data never sees information a live system wouldn't have at scoring time.
+32 features split into two tiers (`BASE_FEATURES`, `BEHAVIORAL_FEATURES`),
+so an ablation study can later ask "did the behavioral tier actually help":
+
+- **Base** (5): `amount`, `log_amount`, `hour_of_day`, `day_of_week`, `is_p2p`.
+- **Behavioral** (27): account age, historical amount mean/std and z-score,
+  send velocity (1h/24h), first-time-beneficiary, fan-out/fan-in counts,
+  inflow/outflow totals and ratio, time since last sent/received
+  ("holding time"), device reuse and shared-device count, and
+  `sender_is_merchant`/`receiver_is_merchant` -- added after a spot-check
+  found merchant P2M fan-in swamping the mule-collector fan-in signal
+  without it (see the module docstring).
+
+### Models
+
+Three models trained in `notebooks/model_training.ipynb` on an 80/20
+**chronological** train/test split (train on the past, evaluate on the
+future -- a random shuffle would leak shared account history across the
+split):
+
+- **XGBoost** and **Random Forest** — supervised, using the synthetic
+  dataset's `true_label`, class-imbalance corrected (`scale_pos_weight` /
+  `class_weight="balanced"`).
+- **Isolation Forest** — unsupervised anomaly detection, sees only feature
+  values, never the label. Included because production will eventually
+  meet fraud patterns no labeled example covered; scores well behind the
+  supervised models here precisely because it gets no label to calibrate
+  against (see the notebook for why that gap doesn't mean it's broken).
+
+On the held-out test set, XGBoost and Random Forest both land above 0.999
+ROC-AUC / PR-AUC; Isolation Forest reaches ~0.59 ROC-AUC. The notebook
+verifies this isn't the model memorizing specific accounts (fraud senders
+actually repeat *less* often between train and test than normal senders
+do, 80% vs 97%) and includes a genuine zero-shot result: `account_takeover`
+never appears in the training window at all, yet XGBoost catches 100% of
+it at test time, because the amount-jump + new-device signature it learns
+from *other* scenarios generalizes. The honest caveat sits right next to
+that finding in the notebook: this dataset's fraud is synthetically
+distinctive on purpose, so read these numbers as "the pipeline learns the
+signal that's there," not as a real-world accuracy claim.
+
+SHAP (`TreeExplainer` on XGBoost) explains individual predictions --
+per-feature contribution plots plus one worked fraud example -- and a
+preliminary base-vs-behavioral ablation (not Phase 8's full study; no graph
+score exists yet) shows the behavioral tier roughly doubling precision
+(~0.52 → ~0.99) at slightly better recall on this run.
+
+### Output
+
+`ml/models/`: `xgboost.joblib`, `random_forest.joblib`,
+`isolation_forest.joblib`, `feature_columns.json` (records the exact
+column order each model expects -- a plain array has no column names to
+check against at inference time), `model_comparison.csv`. Committed to the
+repo (under 10MB total) so `backend/app/ml` has something to load without
+everyone re-running the notebook first.
+
+## Phase 5 — graph intelligence (not started)

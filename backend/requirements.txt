@@ -6,3 +6,9 @@ psycopg2-binary==2.9.10
 pydantic==2.9.2
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
+# Pinned to match the versions ml/notebooks/model_training.ipynb trained
+# against (see ml/requirements.txt) -- joblib pickles of scikit-learn/xgboost
+# objects aren't guaranteed compatible across library versions.
+joblib==1.6.0
+scikit-learn==1.9.1
+xgboost==3.4.1

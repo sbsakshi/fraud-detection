@@ -73,3 +73,21 @@ aren't mistaking "adjacent to a fraud account" for "fraudulent" on their
 own. This is the expected shape of a rules-only baseline — it's exactly the
 gap Phase 4 (ML) and Phase 5 (graph) exist to close, and this table is the
 "before" half of the Phase 8 ablation story.
+
+## Phase 4 — ML models loaded at startup (done)
+
+`app/ml/` loads the artifacts `ml/notebooks/model_training.ipynb` trains
+(see [../ml/README.md](../ml/README.md) for how they're built and what
+they score) once at process startup via a FastAPI `lifespan` handler, and
+exposes `score_transaction(features: dict) -> dict` for inference. Missing
+artifacts don't crash the app -- `GET /health` reports
+`"ml_models": "not_trained"` instead -- since there's no scoring endpoint
+calling this yet; that wiring, including computing `features` from live
+account/transaction state (reusing `ml.features.engineering`'s logic rather
+than duplicating it, to avoid train/serve skew), is Phase 6.
+
+`joblib`/`scikit-learn`/`xgboost` in `requirements.txt` are pinned to
+exactly what trained the committed artifacts -- a joblib pickle of a
+scikit-learn/xgboost object isn't guaranteed to unpickle cleanly across
+library versions, so bumping either side without the other risks a load
+failure that only shows up at runtime.

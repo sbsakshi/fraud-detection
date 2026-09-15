@@ -4,11 +4,17 @@ __pycache__/
 .venv/
 *.db
 .pytest_cache/
+.ipynb_checkpoints/
 
 # Node
 node_modules/
 dist/
 *.tsbuildinfo
+
+# ML — regenerate with `ml.features.build_features` (see ml/README.md);
+# trained model artifacts under ml/models/ are committed since they take
+# real training time and the demo needs them without a rerun.
+ml/data/features.csv
 
 # Env
 .env

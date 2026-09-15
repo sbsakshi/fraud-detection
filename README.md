@@ -10,13 +10,15 @@ against synthetic accounts and transactions.
 - `backend/` — Phase 1 foundation done (FastAPI health check, SQLAlchemy
   models + Alembic migration for the full schema: `accounts`,
   `transactions`, `risk_scores`, `reason_codes`, `graph_edges`, `cases`,
-  `case_events`). Phase 3 rule engine done — see
+  `case_events`). Phase 3 rule engine done, Phase 4's trained models load
+  at startup (`GET /health` reports `ml_models: "loaded"`) — see
   [backend/README.md](backend/README.md). No scoring endpoint yet; that's
   Phase 6, once rules, ML, and graph all exist to fuse together.
 - `frontend/` — Vite + React + TypeScript shell; real dashboards land in
   Phase 7.
-- `ml/` — Phase 2 synthetic data generator done — see
-  [ml/README.md](ml/README.md). Model training is Phase 4.
+- `ml/` — Phase 2 synthetic data generator and Phase 4 model training
+  (XGBoost, Random Forest, Isolation Forest + SHAP) done — see
+  [ml/README.md](ml/README.md).
 - `infra/` — deployment and environment infrastructure (later phases).
 
 ## Run locally
