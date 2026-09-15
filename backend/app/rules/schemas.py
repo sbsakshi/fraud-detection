@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Sequence
 
 from app.models.enums import ReasonCodeSource
+from app.scoring.schemas import ReasonCodeResult
 
 
 @dataclass(frozen=True)
@@ -42,18 +43,13 @@ class RuleContext:
 
 
 @dataclass(frozen=True)
-class FiredRule:
-    """One rule's output — the same shape the `reason_codes` table stores.
+class FiredRule(ReasonCodeResult):
+    """One rule's output -- a `ReasonCodeResult` defaulted to `source=RULE`.
 
-    `template` is human-readable with `{placeholder}` slots already
-    filled from `details`, matching the convention in
-    `app.models.reason_code.ReasonCode.template`/`.details`.
+    See `app.scoring.schemas.ReasonCodeResult` for the shape shared with
+    the ML and graph signal sources.
     """
 
-    code: str
-    template: str
-    details: dict
-    contribution: float
     source: ReasonCodeSource = ReasonCodeSource.RULE
 
 
