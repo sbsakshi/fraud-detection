@@ -52,6 +52,22 @@ class GraphEngineResult:
 
 
 @dataclass(frozen=True)
+class EdgeWrite:
+    """One edge `TransactionGraph.add_transaction` created or updated in-memory.
+
+    Returned so a caller with DB access (`app.graph.live_graph`) can mirror
+    the same edge into the `graph_edges` table -- the in-memory graph and
+    the table are two views of the same facts, not two sources of truth.
+    """
+
+    edge_type: str  # matches app.models.enums.GraphEdgeType's values
+    source_upi_id: str
+    target_upi_id: str
+    weight: float
+    transaction_ref: str | None = None  # set only for edge_type="transaction"
+
+
+@dataclass(frozen=True)
 class CollectorCandidate:
     """A node whose fan-in and fan-out both cross the mule-collector thresholds."""
 

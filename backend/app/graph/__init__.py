@@ -11,7 +11,14 @@ a handful of those queries into reason codes, the same shape
 from app.graph.builder import TransactionGraph
 from app.graph.config import GraphConfig
 from app.graph.engine import evaluate_graph
-from app.graph.schemas import CollectorCandidate, GraphContext, GraphEngineResult, GraphFinding, GraphTransaction
+from app.graph.schemas import (
+    CollectorCandidate,
+    EdgeWrite,
+    GraphContext,
+    GraphEngineResult,
+    GraphFinding,
+    GraphTransaction,
+)
 
 __all__ = [
     "TransactionGraph",
@@ -21,5 +28,6 @@ __all__ = [
     "GraphFinding",
     "GraphEngineResult",
     "CollectorCandidate",
+    "EdgeWrite",
     "evaluate_graph",
 ]

@@ -13,3 +13,12 @@ def check_db_connection() -> bool:
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
     return True
+
+
+def get_db():
+    """FastAPI dependency: one session per request, always closed after."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

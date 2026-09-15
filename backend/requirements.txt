@@ -14,3 +14,9 @@ scikit-learn==1.9.1
 xgboost==3.4.1
 # Phase 5 graph module (app/graph/).
 networkx==3.6.1
+# Phase 6: app/ml/feature_engineering.py (vendored from ml/features/engineering.py)
+# needs pandas to compute live features the same way training did; pinned to
+# match ml/requirements.txt for the same reason as the ML libraries above.
+numpy==2.5.3
+pandas==3.0.5
+shap==0.52.0

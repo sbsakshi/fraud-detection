@@ -1,23 +1,25 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import models  # noqa: F401  (registers ORM mappers at startup)
 from .config import settings
 from .db import check_db_connection
 from .ml import get_models
 from .ml.model_loader import ModelsNotTrainedError
+from .routers import accounts, transactions
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load once at startup, not per-request (Phase 6 is the first thing that
-    # actually calls score_transaction). A missing/untrained model doesn't
-    # stop the app from serving its health check -- it's just not scored yet.
+    # Load once at startup, not per-request. A missing/untrained model
+    # doesn't stop the app from serving its health check -- POST
+    # /transactions just 503s until someone runs the training notebook.
     try:
         get_models()
         logger.info("ML models loaded from ml/models/")
@@ -34,6 +36,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(accounts.router)
+app.include_router(transactions.router)
+
+
+@app.exception_handler(ModelsNotTrainedError)
+async def models_not_trained_handler(request: Request, exc: ModelsNotTrainedError) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.get("/health")

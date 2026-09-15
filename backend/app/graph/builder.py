@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import networkx as nx
 
-from app.graph.schemas import GraphTransaction
+from app.graph.schemas import EdgeWrite, GraphTransaction
 
 # When to materialize a `repeated_counterparty` *edge* in the graph
 # structure itself -- independent of `GraphConfig.repeated_counterparty_threshold`,
@@ -33,7 +33,22 @@ class TransactionGraph:
         self.graph.graph["device_users"] = {}
         self._pair_txn_count: dict[tuple[str, str], int] = {}
 
-    def add_transaction(self, txn: GraphTransaction) -> None:
+    def add_transaction(self, txn: GraphTransaction) -> list[EdgeWrite]:
+        """Apply `txn` to the graph; return every edge created or updated by it.
+
+        The return value is what `app.graph.live_graph` mirrors into the
+        `graph_edges` table -- callers that don't need DB persistence (tests,
+        the CSV-replay evaluation scripts) can just ignore it.
+        """
+        writes = [
+            EdgeWrite(
+                edge_type="transaction",
+                source_upi_id=txn.sender_upi_id,
+                target_upi_id=txn.receiver_upi_id,
+                weight=1.0,
+                transaction_ref=txn.txn_ref,
+            )
+        ]
         self.graph.add_edge(
             txn.sender_upi_id,
             txn.receiver_upi_id,
@@ -58,6 +73,9 @@ class TransactionGraph:
                 other, txn.sender_upi_id, key=f"shared_device:{txn.device_id}",
                 edge_type="shared_device", device_id=txn.device_id,
             )
+            writes.append(
+                EdgeWrite(edge_type="shared_device", source_upi_id=txn.sender_upi_id, target_upi_id=other, weight=1.0)
+            )
         device_users.setdefault(txn.device_id, set()).add(txn.sender_upi_id)
 
         pair = (txn.sender_upi_id, txn.receiver_upi_id)
@@ -71,3 +89,12 @@ class TransactionGraph:
                 txn.sender_upi_id, txn.receiver_upi_id, key="repeated_counterparty",
                 edge_type="repeated_counterparty", weight=float(count),
             )
+            writes.append(
+                EdgeWrite(
+                    edge_type="repeated_counterparty",
+                    source_upi_id=txn.sender_upi_id,
+                    target_upi_id=txn.receiver_upi_id,
+                    weight=float(count),
+                )
+            )
+        return writes

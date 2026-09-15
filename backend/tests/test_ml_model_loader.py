@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from app.ml import get_models, score_transaction
+from app.ml import explain_ml_score, get_models, score_transaction
 from app.ml.model_loader import ModelsNotTrainedError, load_models
+from app.models.enums import ReasonCodeSource
 
 FEATURES_CSV = Path(__file__).resolve().parents[2] / "ml" / "data" / "features.csv"
 
@@ -39,3 +40,19 @@ def test_score_transaction_rejects_incomplete_features(sample_features):
     incomplete = dict(list(sample_features.items())[:-1])  # drop one required key
     with pytest.raises(ValueError, match="missing required feature"):
         score_transaction(incomplete)
+
+
+def test_explain_ml_score_returns_only_positive_contributions(sample_features):
+    reasons = explain_ml_score(sample_features, top_k=3)
+    assert len(reasons) <= 3
+    for r in reasons:
+        assert r.source == ReasonCodeSource.ML
+        assert r.code.startswith("ml_feature:")
+        assert r.contribution > 0
+        assert r.details["feature"] in sample_features
+
+
+def test_explain_ml_score_ranks_by_shap_magnitude(sample_features):
+    reasons = explain_ml_score(sample_features, top_k=5)
+    contributions = [r.contribution for r in reasons]
+    assert contributions == sorted(contributions, reverse=True)

@@ -60,6 +60,25 @@ def test_repeated_counterparty_edge_appears_only_after_threshold():
     assert data["repeated_counterparty"]["weight"] == 5.0
 
 
+def test_add_transaction_reports_which_edges_it_wrote():
+    g = TransactionGraph()
+    writes = g.add_transaction(txn("a", "b", ref="T1"))
+    assert len(writes) == 1
+    assert writes[0].edge_type == "transaction"
+    assert writes[0].source_upi_id == "a"
+    assert writes[0].target_upi_id == "b"
+
+    # First use of a device reports no shared_device write (nothing to connect to yet)...
+    first_use_writes = g.add_transaction(txn("c", "x", device_id="shared", ref="T2"))
+    assert not any(w.edge_type == "shared_device" for w in first_use_writes)
+
+    # ...but the second distinct account using the same device does.
+    second_use_writes = g.add_transaction(txn("d", "y", device_id="shared", ref="T3"))
+    shared = [w for w in second_use_writes if w.edge_type == "shared_device"]
+    assert len(shared) == 1
+    assert {shared[0].source_upi_id, shared[0].target_upi_id} == {"c", "d"}
+
+
 def test_repeated_counterparty_edge_updates_weight_not_duplicated():
     g = TransactionGraph()
     for i in range(7):

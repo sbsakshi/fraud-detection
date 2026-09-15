@@ -1,12 +1,12 @@
-"""Phase 4 — load the trained model artifacts once, score transactions many times.
+"""Phase 4/6 — load the trained model artifacts once, score transactions many times.
 
 The models themselves are trained offline in `ml/notebooks/model_training.ipynb`
 and exported to `ml/models/*.joblib` (see `ml/README.md`); this module's only
-job is loading them into memory once and turning a feature dict into a
-score. Wiring an actual HTTP scoring endpoint that calls `score_transaction`
-per request, and computing its input from live account/transaction state,
-is Phase 6's job -- reuse `ml.features.engineering`'s per-transaction logic
-there rather than recomputing feature math, to avoid train/serve skew.
+job is loading them into memory once, turning a feature dict into scores
+(`score_transaction`), and explaining a score in the same reason-code shape
+rules and graph findings use (`explain_ml_score`, via SHAP). Computing that
+feature dict from live account/transaction state is `app.ml.live_features`'s
+job -- kept separate so this module stays pure inference.
 """
 
 from __future__ import annotations
@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+
+from app.models.enums import ReasonCodeSource
+from app.scoring.schemas import ReasonCodeResult
 
 # backend/app/ml/model_loader.py -> repo root is four parents up.
 MODELS_DIR = Path(__file__).resolve().parents[3] / "ml" / "models"
@@ -83,7 +86,7 @@ def score_transaction(features: dict[str, float], models: MLModels | None = None
 
     # A plain list-of-lists (not a DataFrame) has no column names to check --
     # sklearn/xgboost warn about that on every call, which is expected here
-    # since keeping the backend pandas-free isn't worth silencing otherwise.
+    # since building a one-row DataFrame just to silence it isn't worth the ceremony.
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="X does not have valid feature names")
         return {
@@ -92,3 +95,55 @@ def score_transaction(features: dict[str, float], models: MLModels | None = None
             # Higher = more anomalous, to match the other two scores' "higher = more suspicious" direction.
             "isolation_forest_score": float(-models.isolation_forest_model.score_samples(row)[0]),
         }
+
+
+_shap_explainer: Any = None
+
+
+def _get_shap_explainer(models: MLModels):
+    global _shap_explainer
+    if _shap_explainer is None:
+        import shap
+
+        _shap_explainer = shap.TreeExplainer(models.xgboost_model)
+    return _shap_explainer
+
+
+def explain_ml_score(
+    features: dict[str, float], models: MLModels | None = None, top_k: int = 3
+) -> list[ReasonCodeResult]:
+    """The `top_k` features that pushed the XGBoost score up the most for this transaction.
+
+    Per-prediction SHAP values on the model Phase 4 found strongest, turned
+    into the same reason-code shape `app.rules`/`app.graph` produce -- this
+    is what makes an ML score explainable to an investigator rather than a
+    bare number, same idea Phase 4's notebook used to sanity-check the
+    model, now run at scoring time instead of only in a notebook. Only
+    positive-contribution features are returned (ones that pushed *toward*
+    fraud) -- a feature that pushed the score down isn't a reason to flag
+    the transaction.
+    """
+    models = models or get_models()
+    explainer = _get_shap_explainer(models)
+    row = [[features[c] for c in models.feature_columns]]
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="X does not have valid feature names")
+        shap_values = explainer.shap_values(row)[0]
+
+    contributions = sorted(zip(models.feature_columns, shap_values), key=lambda c: -c[1])
+    return [
+        ReasonCodeResult(
+            code=f"ml_feature:{feature_name}",
+            template="{feature} (value={feature_value:.2f}) was the top contributor to the ML fraud score.",
+            details={
+                "feature": feature_name,
+                "feature_value": round(features[feature_name], 4),
+                "shap_value": round(float(value), 4),
+            },
+            contribution=round(float(value), 4),
+            source=ReasonCodeSource.ML,
+        )
+        for feature_name, value in contributions[:top_k]
+        if value > 0
+    ]
