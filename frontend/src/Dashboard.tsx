@@ -78,8 +78,10 @@ export default function Dashboard() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [focusUpiId, setFocusUpiId] = useState<string | null>(null);
 
-  // `liveTransactions`/`liveStats` stay `null` until the first successful
-  // poll -- that's the only signal used to fall back to mock data, so a
+  // `liveTransactions`/`liveStats` stay `null` until the backend has actually
+  // scored something -- that's the only signal used to fall back to mock
+  // data, so a reachable-but-empty backend (e.g. freshly started, nothing
+  // scored yet) still shows the demo data instead of a blank table/graph. A
   // transient failure after a good poll keeps showing the last known feed
   // (with `connected` flipped off) instead of yanking the UI back to mocks.
   const [liveTransactions, setLiveTransactions] = useState<ScoredTransaction[] | null>(null);
@@ -94,8 +96,10 @@ export default function Dashboard() {
       try {
         const [txns, stats] = await Promise.all([fetchTransactions(), fetchStats()]);
         if (cancelled) return;
-        setLiveTransactions(txns);
-        setLiveStats(stats);
+        if (txns.length > 0) {
+          setLiveTransactions(txns);
+          setLiveStats(stats);
+        }
         setConnected(true);
       } catch {
         if (cancelled) return;

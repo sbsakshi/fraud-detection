@@ -129,11 +129,18 @@ export default function NetworkGraph({ selectedUpiId, onSelectAccount }: Network
 
   // Poll the backend and merge into the persistent sim-node map -- kept
   // separate from the render loop below so a slow/failed fetch never stalls
-  // the animation. If the backend is unreachable and we've never gotten a
-  // real snapshot, seed the graph with demo data once so the panel isn't
-  // empty; a later successful poll replaces it with the real feed.
+  // the animation. If the backend is unreachable, or reachable but hasn't
+  // scored anything yet, seed the graph with demo data once so the panel
+  // isn't empty; a later successful poll with real nodes replaces it.
   useEffect(() => {
     let cancelled = false;
+
+    function seedMock(width: number, height: number) {
+      usingMockRef.current = true;
+      edgesRef.current = mergeGraph(nodesById.current, MOCK_GRAPH as GraphSnapshot, width, height);
+      setStatus("ready");
+      setNodeCount(nodesById.current.size);
+    }
 
     async function poll() {
       const canvas = canvasRef.current;
@@ -142,17 +149,18 @@ export default function NetworkGraph({ selectedUpiId, onSelectAccount }: Network
       try {
         const snapshot = await fetchGraph();
         if (cancelled) return;
-        usingMockRef.current = false;
-        edgesRef.current = mergeGraph(nodesById.current, snapshot, width, height);
-        setStatus("ready");
-        setNodeCount(nodesById.current.size);
+        if (snapshot.nodes.length > 0) {
+          usingMockRef.current = false;
+          edgesRef.current = mergeGraph(nodesById.current, snapshot, width, height);
+          setStatus("ready");
+          setNodeCount(nodesById.current.size);
+        } else if (nodesById.current.size === 0 && !usingMockRef.current) {
+          seedMock(width, height);
+        }
       } catch {
         if (cancelled) return;
         if (nodesById.current.size === 0 && !usingMockRef.current) {
-          usingMockRef.current = true;
-          edgesRef.current = mergeGraph(nodesById.current, MOCK_GRAPH as GraphSnapshot, width, height);
-          setStatus("ready");
-          setNodeCount(nodesById.current.size);
+          seedMock(width, height);
         } else if (!usingMockRef.current) {
           setStatus("error");
         }
