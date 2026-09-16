@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchGraph, type GraphSnapshot } from "./api";
 import { simulateStep, type SimEdge, type SimNode } from "./graphLayout";
+import { MOCK_GRAPH } from "./mockData";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -124,10 +125,13 @@ export default function NetworkGraph({ selectedUpiId, onSelectAccount }: Network
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [nodeCount, setNodeCount] = useState(0);
+  const usingMockRef = useRef(false);
 
   // Poll the backend and merge into the persistent sim-node map -- kept
   // separate from the render loop below so a slow/failed fetch never stalls
-  // the animation.
+  // the animation. If the backend is unreachable and we've never gotten a
+  // real snapshot, seed the graph with demo data once so the panel isn't
+  // empty; a later successful poll replaces it with the real feed.
   useEffect(() => {
     let cancelled = false;
 
@@ -138,12 +142,20 @@ export default function NetworkGraph({ selectedUpiId, onSelectAccount }: Network
       try {
         const snapshot = await fetchGraph();
         if (cancelled) return;
+        usingMockRef.current = false;
         edgesRef.current = mergeGraph(nodesById.current, snapshot, width, height);
         setStatus("ready");
         setNodeCount(nodesById.current.size);
       } catch {
         if (cancelled) return;
-        setStatus("error");
+        if (nodesById.current.size === 0 && !usingMockRef.current) {
+          usingMockRef.current = true;
+          edgesRef.current = mergeGraph(nodesById.current, MOCK_GRAPH as GraphSnapshot, width, height);
+          setStatus("ready");
+          setNodeCount(nodesById.current.size);
+        } else if (!usingMockRef.current) {
+          setStatus("error");
+        }
       }
     }
 

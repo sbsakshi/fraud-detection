@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_BASE_URL, fetchStats, fetchTransactions, type Stats } from "./api";
+import { fetchStats, fetchTransactions, type Stats } from "./api";
 import "./dashboard.css";
 import { MOCK_STATS, MOCK_TRANSACTIONS, type InterventionLevel, type ScoredTransaction } from "./mockData";
 import NetworkGraph from "./NetworkGraph";
@@ -148,12 +148,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {!usingLiveData && (
-          <div className="mock-banner">
-            Showing mock data for preview purposes — the backend at {API_BASE_URL} isn't reachable yet. Start it
-            (`docker compose up --build`) to see live-scored transactions.
-          </div>
-        )}
         {usingLiveData && !connected && (
           <div className="mock-banner">
             Lost the connection to the backend — showing the last data received. Retrying every{" "}
@@ -258,9 +252,7 @@ export default function Dashboard() {
         </div>
 
         <footer className="note">
-          Finsight — synthetic UPI fraud intelligence.{" "}
-          {usingLiveData ? "Rows are live-scored transactions" : "Rows are mock data"}; click a row to see its
-          reason codes.
+          Finsight — synthetic UPI fraud intelligence. Click a row to see its reason codes.
         </footer>
       </div>
     </div>
