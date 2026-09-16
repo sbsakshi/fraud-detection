@@ -10,7 +10,7 @@ from .config import settings
 from .db import check_db_connection
 from .ml import get_models
 from .ml.model_loader import ModelsNotTrainedError
-from .routers import accounts, transactions
+from .routers import accounts, graph, transactions
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ app.add_middleware(
 
 app.include_router(accounts.router)
 app.include_router(transactions.router)
+app.include_router(graph.router)
 
 
 @app.exception_handler(ModelsNotTrainedError)

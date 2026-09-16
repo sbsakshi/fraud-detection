@@ -155,3 +155,117 @@ def test_transaction_response_reason_codes_have_the_shared_shape(client: TestCli
         assert rc["source"] in {"rule", "ml", "graph"}
         assert isinstance(rc["template"], str) and rc["template"]
         assert isinstance(rc["details"], dict)
+
+
+def test_list_transactions_is_empty_before_any_scoring(client: TestClient):
+    resp = client.get("/transactions")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_transactions_returns_newest_first(client: TestClient):
+    create_account(client, "alice@bank", device_id="d1")
+    create_account(client, "bob@bank", device_id="d2")
+
+    first = score(client, "alice@bank", "bob@bank", "100.00", "d1")
+    second = score(client, "alice@bank", "bob@bank", "200.00", "d1")
+
+    resp = client.get("/transactions")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 2
+    assert body[0]["transaction_id"] == second["transaction_id"]
+    assert body[1]["transaction_id"] == first["transaction_id"]
+    assert_case_invariant(body[0])
+    assert_case_invariant(body[1])
+
+
+def test_list_transactions_respects_limit(client: TestClient):
+    create_account(client, "alice@bank", device_id="d1")
+    create_account(client, "bob@bank", device_id="d2")
+    for _ in range(5):
+        score(client, "alice@bank", "bob@bank", "100.00", "d1")
+
+    resp = client.get("/transactions", params={"limit": 2})
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+def test_stats_before_any_scoring_are_all_zero(client: TestClient):
+    resp = client.get("/transactions/stats")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "transactions_scored": 0,
+        "flagged_rate": 0.0,
+        "active_cases": 0,
+        "avg_fused_score": 0.0,
+    }
+
+
+def test_graph_snapshot_is_empty_before_any_scoring(client: TestClient):
+    resp = client.get("/graph")
+    assert resp.status_code == 200
+    assert resp.json() == {"nodes": [], "edges": []}
+
+
+def test_graph_snapshot_reflects_scored_transactions(client: TestClient):
+    create_account(client, "alice@bank", device_id="d1")
+    create_account(client, "bob@bank", device_id="d2")
+    create_account(client, "charlie@bank", device_id="d3")
+    score(client, "alice@bank", "bob@bank", "100.00", "d1")
+    # bob transacting from the *same device string* alice already used is
+    # what TransactionGraph.add_transaction keys shared_device edges on
+    # (app/graph/builder.py's `device_users` index) -- an account's own
+    # `device_id` column is unrelated to that.
+    score(client, "bob@bank", "charlie@bank", "50.00", "d1")
+
+    resp = client.get("/graph")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    node_ids = {n["id"] for n in body["nodes"]}
+    assert node_ids == {"alice@bank", "bob@bank", "charlie@bank"}
+    for node in body["nodes"]:
+        assert isinstance(node["community"], int)
+
+    edge_types = {e["type"] for e in body["edges"]}
+    assert "transaction" in edge_types
+    assert "shared_device" in edge_types
+    txn_edge = next(e for e in body["edges"] if e["type"] == "transaction" and e["source"] == "alice@bank")
+    assert txn_edge["target"] == "bob@bank"
+    assert txn_edge["weight"] == 1.0
+
+
+def test_graph_snapshot_aggregates_repeated_transaction_edges(client: TestClient):
+    create_account(client, "alice@bank", device_id="d1")
+    create_account(client, "bob@bank", device_id="d2")
+    for _ in range(3):
+        score(client, "alice@bank", "bob@bank", "100.00", "d1")
+
+    resp = client.get("/graph")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    txn_edges = [e for e in body["edges"] if e["type"] == "transaction"]
+    assert len(txn_edges) == 1  # collapsed into one edge, not one per transaction
+    assert txn_edges[0]["weight"] == 3.0
+
+
+def test_stats_reflect_scored_transactions_and_open_cases(client: TestClient):
+    create_account(client, "alice@bank", device_id="d1")
+    for i in range(8):
+        create_account(client, f"friend{i}@bank", device_id=f"df{i}")
+    create_account(client, "stranger@bank", device_id="ds")
+
+    for i in range(8):
+        score(client, "alice@bank", f"friend{i}@bank", "100.00", "d1")
+    escalation = score(client, "alice@bank", "stranger@bank", "50000.00", "brand-new-device")
+
+    resp = client.get("/transactions/stats")
+    assert resp.status_code == 200
+    stats = resp.json()
+    assert stats["transactions_scored"] == 9
+    assert 0.0 <= stats["flagged_rate"] <= 1.0
+    assert 0.0 <= stats["avg_fused_score"] <= 1.0
+    if escalation["case"] is not None:
+        assert stats["active_cases"] >= 1

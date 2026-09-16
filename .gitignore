@@ -22,3 +22,6 @@ ml/data/features.csv
 # Editors
 .vscode/
 .idea/
+
+# Logs
+*.log

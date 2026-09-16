@@ -100,3 +100,33 @@ class TransactionScoreOut(BaseModel):
     risk_score: RiskScoreOut
     reason_codes: list[ReasonCodeOut]
     case: CaseOut | None
+
+
+class TransactionStatsOut(BaseModel):
+    transactions_scored: int
+    flagged_rate: float
+    active_cases: int
+    avg_fused_score: float
+
+
+class GraphNodeOut(BaseModel):
+    id: str  # upi_id -- the live graph's own node key, see app.graph.builder
+    true_label: str | None
+    account_type: AccountType | None
+    # Which Louvain community (app.graph.analysis.detect_communities) this
+    # node falls into, for cluster coloring -- not a fraud signal on its own,
+    # just a stable grouping so the frontend can render mule rings etc. as
+    # visually distinct clusters.
+    community: int
+
+
+class GraphEdgeOut(BaseModel):
+    source: str
+    target: str
+    type: str  # matches app.models.enums.GraphEdgeType's values
+    weight: float
+
+
+class GraphOut(BaseModel):
+    nodes: list[GraphNodeOut]
+    edges: list[GraphEdgeOut]
