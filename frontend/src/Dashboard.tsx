@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, fetchStats, fetchTransactions, type Stats } from "./api";
 import "./dashboard.css";
 import { MOCK_STATS, MOCK_TRANSACTIONS, type InterventionLevel, type ScoredTransaction } from "./mockData";
+import NetworkGraph from "./NetworkGraph";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -75,6 +76,7 @@ function ReasonDetail({ txn }: { txn: ScoredTransaction }) {
 export default function Dashboard() {
   const [role, setRole] = useState<Role>("Investigator");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [focusUpiId, setFocusUpiId] = useState<string | null>(null);
 
   // `liveTransactions`/`liveStats` stay `null` until the first successful
   // poll -- that's the only signal used to fall back to mock data, so a
@@ -117,13 +119,21 @@ export default function Dashboard() {
   const selfUpiId = allTransactions[0]?.senderUpiId ?? "alice@okaxis";
 
   const transactions = useMemo(() => {
+    let rows = allTransactions;
     if (role === "Payer / Receiver") {
       // A payer only ever sees their own transactions, and never the
       // internal score breakdown -- just whether they should be worried.
-      return allTransactions.filter((t) => t.senderUpiId === selfUpiId || t.receiverUpiId === selfUpiId);
+      rows = rows.filter((t) => t.senderUpiId === selfUpiId || t.receiverUpiId === selfUpiId);
     }
-    return allTransactions;
-  }, [role, allTransactions, selfUpiId]);
+    if (focusUpiId) {
+      rows = rows.filter((t) => t.senderUpiId === focusUpiId || t.receiverUpiId === focusUpiId);
+    }
+    return rows;
+  }, [role, allTransactions, selfUpiId, focusUpiId]);
+
+  // Stable identity so NetworkGraph's mouse/animation-loop effect (which
+  // depends on this callback) doesn't tear down and rebuild on every render.
+  const handleSelectAccount = useCallback((upiId: string | null) => setFocusUpiId(upiId), []);
 
   return (
     <div className="app">
@@ -178,11 +188,30 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {role !== "Payer / Receiver" && (
+          <div className="panel graph-panel">
+            <div className="panel-header">
+              <span>Money-movement graph</span>
+              <span style={{ color: "var(--muted)", fontWeight: 400, fontSize: "0.75rem" }}>
+                accounts as nodes, transactions/shared devices as edges
+              </span>
+            </div>
+            <NetworkGraph selectedUpiId={focusUpiId} onSelectAccount={handleSelectAccount} />
+          </div>
+        )}
+
         <div className="panel">
           <div className="panel-header">
             <span>Live transaction feed</span>
-            <span style={{ color: "var(--muted)", fontWeight: 400, fontSize: "0.75rem" }}>
-              {transactions.length} shown
+            <span className="panel-header-right">
+              {focusUpiId && (
+                <button className="focus-chip" onClick={() => setFocusUpiId(null)}>
+                  Focused on <span className="mono">{focusUpiId}</span> &times;
+                </button>
+              )}
+              <span style={{ color: "var(--muted)", fontWeight: 400, fontSize: "0.75rem" }}>
+                {transactions.length} shown
+              </span>
             </span>
           </div>
           <div className="table-wrap">
