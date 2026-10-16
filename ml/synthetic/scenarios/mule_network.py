@@ -1,8 +1,12 @@
-"""Mule network: many compromised/recruited source accounts fan money in to a
-small set of collector accounts within a tight window, which then fan it out
-to one or two cashout accounts. Speed and fan-in/fan-out breadth (rather than
-chain depth) is what obscures the trail. A couple of collectors in each ring
-share a device, modelling one mule herder operating several accounts.
+"""Mule network: many source accounts fan money in to a small set of collector
+accounts within a tight window, which then fan it out to one or two cashout
+accounts. Speed and fan-in/fan-out breadth (rather than chain depth) is what
+obscures the trail.
+
+About half the collectors (`MULE_RECRUITED_COLLECTOR_RATE`) are recruited,
+established account holders rather than fresh accounts. One mule herder runs
+each ring: the fresh collectors are registered on the herder's device, and the
+recruited collectors' sweeps are made from it too.
 """
 
 from datetime import timedelta
@@ -12,14 +16,21 @@ import pandas as pd
 
 from ml.synthetic.config import (
     DATE_RANGE_DAYS,
-    END_DATE,
     MULE_CASHOUTS_RANGE,
     MULE_COLLECTORS_RANGE,
     MULE_FANIN_RANGE,
+    MULE_RECRUITED_COLLECTOR_RATE,
     NUM_MULE_RINGS,
 )
-from ml.synthetic.helpers import new_account_row
-from ml.synthetic.scenarios._util import make_txn_row, random_base_timestamp, shortly_after
+from ml.synthetic.helpers import new_account_row, new_device_id
+from ml.synthetic.scenarios._util import (
+    created_before,
+    individuals_before,
+    make_txn_row,
+    pick_aged_account,
+    random_base_timestamp,
+    shortly_after,
+)
 
 SCENARIO = "mule_network"
 
@@ -27,44 +38,59 @@ SCENARIO = "mule_network"
 def inject(rng: np.random.Generator, faker, accounts_df: pd.DataFrame, account_counter, txn_counter):
     new_accounts = []
     new_txns = []
+    account_updates: dict[str, str] = {}
+    taken: set[str] = set()
 
-    individual_upis = accounts_df.loc[accounts_df["account_type"] == "individual", "upi_id"].to_numpy()
+    device_lookup = accounts_df.set_index("upi_id")["device_id"]
 
     for _ in range(NUM_MULE_RINGS):
-        created_at = pd.Timestamp(END_DATE) - timedelta(days=int(rng.integers(5, 60)))
+        window_start = random_base_timestamp(rng, hour_low=8, hour_high=22, max_day_offset=DATE_RANGE_DAYS - 1)
+        herder_device = new_device_id(rng)
         num_collectors = int(rng.integers(MULE_COLLECTORS_RANGE[0], MULE_COLLECTORS_RANGE[1] + 1))
         num_cashouts = int(rng.integers(MULE_CASHOUTS_RANGE[0], MULE_CASHOUTS_RANGE[1] + 1))
 
-        collectors = [new_account_row(rng, faker, account_counter, created_at, true_label=SCENARIO) for _ in range(num_collectors)]
-        # Two of the collectors (or one, if the ring is small) share a device: one
-        # mule herder running several accounts off a single phone.
-        shared_device = collectors[0]["device_id"]
-        for c in collectors[: min(2, num_collectors)]:
-            c["device_id"] = shared_device
-        cashouts = [new_account_row(rng, faker, account_counter, created_at, true_label=SCENARIO) for _ in range(num_cashouts)]
-        new_accounts.extend(collectors + cashouts)
+        collectors = []  # (account row, device the sweep is made from)
+        for _ in range(num_collectors):
+            recruited = (
+                pick_aged_account(rng, accounts_df, window_start, taken)
+                if rng.random() < MULE_RECRUITED_COLLECTOR_RATE
+                else None
+            )
+            if recruited is not None:
+                account_updates[recruited["upi_id"]] = SCENARIO
+                collectors.append((recruited, herder_device))
+            else:
+                row = new_account_row(
+                    rng, faker, account_counter, created_before(rng, window_start, 1, 30),
+                    true_label=SCENARIO, device_id=herder_device,
+                )
+                new_accounts.append(row)
+                collectors.append((row, herder_device))
+        cashouts = [
+            new_account_row(rng, faker, account_counter, created_before(rng, window_start, 1, 30), true_label=SCENARIO)
+            for _ in range(num_cashouts)
+        ]
+        new_accounts.extend(cashouts)
 
-        # Small buffer so the fan-in window plus sweep delays can't spill past END_DATE.
-        window_start = random_base_timestamp(rng, hour_low=8, hour_high=22, max_day_offset=DATE_RANGE_DAYS - 1)
+        collector_upis = {c["upi_id"] for c, _ in collectors}
+        sender_pool = [u for u in individuals_before(accounts_df, window_start) if u not in collector_upis]
         num_fanin = int(rng.integers(MULE_FANIN_RANGE[0], MULE_FANIN_RANGE[1] + 1))
-        sender_upis = rng.choice(individual_upis, size=num_fanin, replace=False)
+        sender_upis = rng.choice(sender_pool, size=num_fanin, replace=False)
 
-        collector_totals = {c["upi_id"]: 0.0 for c in collectors}
-        collector_last_ts = {c["upi_id"]: window_start for c in collectors}
-        device_lookup_partial = accounts_df.set_index("upi_id")["device_id"]
+        collector_totals = {c["upi_id"]: 0.0 for c, _ in collectors}
+        collector_last_ts = {c["upi_id"]: window_start for c, _ in collectors}
 
         for sender_upi in sender_upis:
-            collector = collectors[int(rng.integers(0, num_collectors))]
+            collector, _ = collectors[int(rng.integers(0, num_collectors))]
             ts = window_start + timedelta(seconds=int(rng.integers(0, 7200)))
             amount = float(np.clip(rng.lognormal(mean=7.5, sigma=0.7), 200, 20_000))
-            sender_device = device_lookup_partial.get(sender_upi)
             new_txns.append(
                 make_txn_row(
                     txn_counter,
                     sender_upi,
                     collector["upi_id"],
                     amount,
-                    device_id=sender_device,
+                    device_id=device_lookup.get(sender_upi),
                     created_at=ts,
                     transaction_type="P2P",
                     true_label=SCENARIO,
@@ -74,9 +100,7 @@ def inject(rng: np.random.Generator, faker, accounts_df: pd.DataFrame, account_c
             collector_totals[collector["upi_id"]] += amount
             collector_last_ts[collector["upi_id"]] = max(collector_last_ts[collector["upi_id"]], ts)
 
-        # Each collector sweeps ~95% of what it received onward to a cashout
-        # account shortly after its last incoming payment.
-        for c in collectors:
+        for c, sweep_device in collectors:
             total = collector_totals[c["upi_id"]]
             if total <= 0:
                 continue
@@ -88,7 +112,7 @@ def inject(rng: np.random.Generator, faker, accounts_df: pd.DataFrame, account_c
                     c["upi_id"],
                     cashout["upi_id"],
                     total * float(rng.uniform(0.90, 0.97)),
-                    device_id=c["device_id"],
+                    device_id=sweep_device,
                     created_at=sweep_ts,
                     transaction_type="P2P",
                     true_label=SCENARIO,
@@ -96,6 +120,4 @@ def inject(rng: np.random.Generator, faker, accounts_df: pd.DataFrame, account_c
                 )
             )
 
-    new_accounts_df = pd.DataFrame(new_accounts)
-    new_txns_df = pd.DataFrame(new_txns)
-    return new_accounts_df, new_txns_df, {}
+    return pd.DataFrame(new_accounts), pd.DataFrame(new_txns), account_updates

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from ml.synthetic.config import NUM_INNOCENT_BYSTANDERS
-from ml.synthetic.scenarios._util import make_txn_row, random_base_timestamp
+from ml.synthetic.scenarios._util import make_txn_row, random_timestamp_after
 
 SCENARIO = "innocent_bystander"
 
@@ -30,10 +30,12 @@ def inject(rng: np.random.Generator, accounts_df: pd.DataFrame, fraud_pool_upis,
     counterparties = rng.choice(fraud_pool_upis, size=num_bystanders, replace=True)
 
     device_lookup = accounts_df.set_index("upi_id")["device_id"]
+    created_lookup = pd.to_datetime(accounts_df.set_index("upi_id")["created_at"])
 
     for bystander_upi, fraud_upi in zip(bystanders, counterparties):
         account_updates[bystander_upi] = SCENARIO
-        ts = random_base_timestamp(rng)
+        # Never before either account existed.
+        ts = random_timestamp_after(rng, max(created_lookup[bystander_upi], created_lookup[fraud_upi]))
         amount = float(np.clip(rng.lognormal(mean=5.9, sigma=1.0), 10, 20_000))
         bystander_pays = rng.random() < 0.5
         sender, receiver = (bystander_upi, fraud_upi) if bystander_pays else (fraud_upi, bystander_upi)

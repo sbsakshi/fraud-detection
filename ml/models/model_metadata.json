@@ -1,0 +1,72 @@
+{
+  "trained_at": "2026-10-16T02:52:13+00:00",
+  "data_sha256": {
+    "accounts.csv": "04029826ab85f1001bab71cbeab5aa58da51de9624d01f6660aa21cc5eb367f6",
+    "transactions.csv": "48538a86c8c9d550e6932e2b0afae8a27f325a08c1962277d89c74dabd7e5bec"
+  },
+  "library_versions": {
+    "python": "3.12.14",
+    "xgboost": "3.4.1",
+    "scikit-learn": "1.9.1",
+    "pandas": "3.0.5",
+    "numpy": "2.5.3"
+  },
+  "feature_columns": [
+    "amount",
+    "log_amount",
+    "hour_of_day",
+    "day_of_week",
+    "is_p2p",
+    "sender_account_age_days",
+    "receiver_account_age_days",
+    "sender_txn_count_hist",
+    "sender_amount_mean_hist",
+    "sender_amount_std_hist",
+    "amount_zscore_sender",
+    "amount_to_sender_avg_ratio",
+    "sender_txn_count_1h",
+    "sender_txn_count_24h",
+    "is_first_time_beneficiary",
+    "sender_unique_receivers_hist",
+    "receiver_unique_senders_hist",
+    "receiver_unique_senders_1h",
+    "receiver_txn_count_1h",
+    "receiver_unique_senders_24h",
+    "receiver_txn_count_24h",
+    "sender_inflow_total_hist",
+    "sender_outflow_total_hist",
+    "sender_inflow_outflow_ratio",
+    "receiver_inflow_total_hist",
+    "receiver_outflow_total_hist",
+    "receiver_inflow_outflow_ratio",
+    "minutes_since_sender_last_sent",
+    "minutes_since_sender_last_received",
+    "sender_distinct_devices_hist",
+    "is_new_device_for_sender",
+    "device_shared_account_count",
+    "receiver_device_shared_account_count",
+    "sender_minutes_since_first_seen",
+    "receiver_minutes_since_first_seen",
+    "sender_is_merchant",
+    "receiver_is_merchant"
+  ],
+  "xgboost_params": {
+    "max_depth": 3,
+    "learning_rate": 0.1,
+    "min_child_weight": 1,
+    "n_estimators": 193
+  },
+  "split": {
+    "burn_in_before": "2026-07-16",
+    "train_frac": 0.6,
+    "val_frac": 0.2,
+    "rows": {
+      "train": 32845,
+      "val": 10948,
+      "test": 10949
+    }
+  },
+  "alert_threshold": 0.1,
+  "target_fpr": 0.01,
+  "anomaly_reason_percentile": 0.99
+}

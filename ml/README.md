@@ -1,137 +1,155 @@
 # ml
 
-## Phase 2 — synthetic data (done)
-
-`synthetic/` generates the full dataset the rest of the project trains and
-demos against: statistically-generated "normal" UPI traffic, plus six
-scenario injectors that each add a labelled fraud pattern on top.
+Synthetic data generation, feature engineering, and model training for the
+backend's ML layer.
 
 ```bash
-# from the repo root, using ml/.venv
-ml/.venv/Scripts/python.exe -m ml.synthetic.generate_dataset
+# from the repo root
+pip install -r ml/requirements.txt pytest
+python -m ml.synthetic.generate_dataset   # -> ml/data/{accounts,transactions}.csv
+python -m ml.features.build_features      # -> ml/data/features.csv (gitignored)
+python -m ml.train                        # -> ml/models/*
+python -m pytest ml/tests/
 ```
 
-Writes `data/accounts.csv` and `data/transactions.csv`. Generation is seeded
-(`SEED` in `synthetic/config.py`) so re-running reproduces the same dataset.
+On macOS, xgboost needs an OpenMP runtime: `brew install libomp`, or point
+`DYLD_LIBRARY_PATH` at the copy scikit-learn bundles
+(`.../site-packages/sklearn/.dylibs`).
+
+## Synthetic data (`synthetic/`)
+
+Statistically generated "normal" UPI traffic, six labelled scenario injectors,
+and two unlabelled look-alike patterns. Generation is seeded (`SEED` in
+`synthetic/config.py`), so re-running reproduces the same dataset: 6,892
+accounts and 75,001 transactions, 7.0% labelled fraud.
+
+### Design rules (each fixes a shortcut the first version had)
+
+| Rule | Why |
+|---|---|
+| A 30-day burn-in (`BURN_IN_DAYS`) of normal traffic before any fraud; training drops it | Otherwise every account starts with empty history on day 1, and "no history" stops meaning "new account" |
+| 6% of normal accounts are opened inside the window (`NEW_ACCOUNT_RATE`) | Fraud accounts used to be the *only* new accounts, so "brand-new receiver" was a near-perfect label |
+| 30-50% of fraud-role accounts are aged, recruited or bought accounts | Same reason; real mule herders recruit established accounts |
+| No transaction predates its accounts (enforced by a check in `generate_dataset.py`) | The first version had ~1,800 rows with negative account age |
+| Account takeovers are spread over the whole window, 50% at night | They used to be pinned to the last 10 days, so all of them landed in the test split |
+| 20 short-lived gambling operators instead of 5 permanent ones | With 5, every test operator was also in training and the model memorized them |
+| Look-alikes: `large_new_payee` (450 rows), `group_collection` (1,321 rows) | Legitimate traffic sharing surface features with fraud, so evaluation measures false positives on the hard cases |
 
 ### Layout
 
-- `synthetic/config.py` — every tunable constant: account/transaction counts,
-  date window, per-scenario scale.
-- `synthetic/base_traffic.py` — accounts and "normal" transactions, built from
-  statistical distributions (log-normal amounts, Pareto-weighted per-account
-  activity, an hour-of-day usage curve), not hand-authored rows.
-- `synthetic/helpers.py` — shared id/identity generation (UPI ids, IFSC codes,
-  device ids, account rows).
-- `synthetic/scenarios/` — one module per labelled fraud pattern:
-  - `scam_recipient` — a fresh account collects one-off payments from many
-    unrelated victims, then sweeps the proceeds onward.
-  - `mule_network` — fan-in from many source accounts to a handful of
-    collectors within a tight window, then fan-out to cashout accounts; some
-    collectors share a device (one mule herder, several accounts).
-  - `layering_chain` — a lump sum moves hop-by-hop through a fresh account
-    chain in quick succession, shedding a small "fee" each hop.
-  - `account_takeover` — an established account transacts from a device it's
-    never used, draining an unusually large sum to a brand-new beneficiary.
-  - `gambling_network` — a small set of betting-operator merchants receive
-    frequent, mostly-late-night payments from a large bettor pool.
-  - `innocent_bystander` — an ordinary account has one perfectly normal
-    transaction with an account that carries a fraud label elsewhere; not
-    itself fraudulent, so the system is expected *not* to flag it. Runs last,
-    since it needs the other scenarios' accounts to be adjacent to.
-- `synthetic/generate_dataset.py` — orchestrates the above and writes `data/`.
+- `synthetic/config.py`: every tunable constant.
+- `synthetic/base_traffic.py`: accounts and normal transactions from
+  statistical distributions (log-normal amounts, Pareto-weighted activity, an
+  hour-of-day curve).
+- `synthetic/legit_patterns.py`: the unlabelled look-alikes.
+- `synthetic/scenarios/`: one module per labelled pattern (`scam_recipient`,
+  `mule_network`, `layering_chain`, `account_takeover`, `gambling_network`),
+  plus `innocent_bystander`: an ordinary account with one normal transaction
+  with a fraud-labelled account, which the system should *not* flag.
+- `synthetic/generate_dataset.py`: orchestrates the above and writes `data/`.
 
 ### Output schema
 
 `accounts.csv`: `upi_id` (natural key), `account_number`, `ifsc_code`,
-`owner_name`, `bank_name`, `account_type`, `device_id`, `true_label`
-(ground-truth fraud pattern, null = normal), `is_active`, `created_at`.
+`owner_name`, `bank_name`, `account_type`, `device_id`, `true_label` (the
+fraud pattern the account took part in; null = normal), `is_active`,
+`created_at`.
 
 `transactions.csv`: `txn_ref` (natural key), `sender_upi_id`,
 `receiver_upi_id`, `amount`, `currency`, `device_id`, `transaction_type`,
-`status`, `true_label` (null unless the transaction itself is fraudulent —
-`innocent_bystander` transactions carry a `scenario` but no `true_label`),
-`scenario` (which injector produced the row, null for base traffic),
-`created_at`.
+`status`, `true_label` (null unless the transaction itself is fraud),
+`scenario` (which injector produced the row; set for look-alikes and
+bystanders too, which carry no `true_label`), `created_at`.
 
-Rows reference accounts by `upi_id` / transactions by natural keys rather
-than the backend's integer primary keys, since those are assigned by
-Postgres at insert time — a later loader/replay step resolves them.
+## Features (`features/engineering.py`)
 
-## Phase 4 — model training (done)
-
-`features/` turns the Phase 2 synthetic dataset into a labeled feature
-table; `notebooks/model_training.ipynb` trains on it and exports the
-artifacts `backend/app/ml` loads at startup.
-
-```bash
-# from the repo root, using ml/.venv (pip install -r ml/requirements-dev.txt
-# for jupyter/pytest on top of ml/requirements.txt)
-ml/.venv/Scripts/python.exe -m ml.features.build_features   # -> ml/data/features.csv
-ml/.venv/Scripts/python.exe -m pytest ml/tests/
-ml/.venv/Scripts/python.exe -m jupyter lab                  # open notebooks/model_training.ipynb
-```
-
-### Features
-
-`features/engineering.py` does one chronological pass over
-`transactions.csv`, computing every feature from account/device state built
-up by transactions strictly *before* the one being scored -- the same
-no-peeking-at-the-future discipline `backend/app/rules` uses, so training
-data never sees information a live system wouldn't have at scoring time.
-32 features split into two tiers (`BASE_FEATURES`, `BEHAVIORAL_FEATURES`),
-so an ablation study can later ask "did the behavioral tier actually help":
+One chronological pass, every feature computed only from state built up by
+transactions strictly *before* the one being scored. The backend reruns the
+exact same code at scoring time (vendored copy, kept byte-identical by a
+test), so there's no train/serve skew.
 
 - **Base** (5): `amount`, `log_amount`, `hour_of_day`, `day_of_week`, `is_p2p`.
-- **Behavioral** (27): account age, historical amount mean/std and z-score,
-  send velocity (1h/24h), first-time-beneficiary, fan-out/fan-in counts,
-  inflow/outflow totals and ratio, time since last sent/received
-  ("holding time"), device reuse and shared-device count, and
-  `sender_is_merchant`/`receiver_is_merchant` -- added after a spot-check
-  found merchant P2M fan-in swamping the mule-collector fan-in signal
-  without it (see the module docstring).
+- **Behavioral** (32): account age, amount mean/std/z-score versus the sender's
+  history, send velocity (1h/24h), first-time beneficiary, fan-in/fan-out
+  counts (receiver over 1h *and* 24h), inflow/outflow totals and ratios,
+  holding time, device reuse and sharing (sender's device and the receiver's
+  devices), time since each account first appeared in the payment graph, and
+  merchant flags.
+- Missing history is `NaN` (`NULLABLE_FEATURES`), not a `-1` sentinel that
+  collided with real values. XGBoost handles NaN natively; the Isolation
+  Forest gets median imputation plus missing-indicator columns.
 
-### Models
+## Training (`train.py`)
 
-Three models trained in `notebooks/model_training.ipynb` on an 80/20
-**chronological** train/test split (train on the past, evaluate on the
-future -- a random shuffle would leak shared account history across the
-split):
+1. Drop the burn-in, then split chronologically: train 60% / validation 20% /
+   test 20% (32,845 / 10,948 / 10,949 rows).
+2. XGBoost: grid search over depth, learning rate and min child weight, with
+   early stopping on validation PR-AUC. No class reweighting, which would
+   inflate probabilities.
+3. Isotonic calibration on validation, so scores are probabilities.
+4. Alert threshold = lowest calibrated score that keeps validation non-fraud
+   false positives at or under 1%.
+5. Isolation Forest on normal training traffic only, reported as a percentile
+   of normal-traffic anomaly scores.
+6. Evaluate once on test, and run leave-one-scenario-out retraining.
 
-- **XGBoost** and **Random Forest** — supervised, using the synthetic
-  dataset's `true_label`, class-imbalance corrected (`scale_pos_weight` /
-  `class_weight="balanced"`).
-- **Isolation Forest** — unsupervised anomaly detection, sees only feature
-  values, never the label. Included because production will eventually
-  meet fraud patterns no labeled example covered; scores well behind the
-  supervised models here precisely because it gets no label to calibrate
-  against (see the notebook for why that gap doesn't mean it's broken).
+Artifacts in `ml/models/`: `xgboost.joblib`, `calibrator.joblib`,
+`isolation_forest.joblib`, `feature_columns.json`, `model_metadata.json` (data
+hashes, library versions, parameters, thresholds; checked by the backend at
+load) and `metrics.json` (everything below). They're committed, so the backend
+works without retraining.
 
-On the held-out test set, XGBoost and Random Forest both land above 0.999
-ROC-AUC / PR-AUC; Isolation Forest reaches ~0.59 ROC-AUC. The notebook
-verifies this isn't the model memorizing specific accounts (fraud senders
-actually repeat *less* often between train and test than normal senders
-do, 80% vs 97%) and includes a genuine zero-shot result: `account_takeover`
-never appears in the training window at all, yet XGBoost catches 100% of
-it at test time, because the amount-jump + new-device signature it learns
-from *other* scenarios generalizes. The honest caveat sits right next to
-that finding in the notebook: this dataset's fraud is synthetically
-distinctive on purpose, so read these numbers as "the pipeline learns the
-signal that's there," not as a real-world accuracy claim.
+## Results (test split, 2026-09-04 .. 2026-09-14)
 
-SHAP (`TreeExplainer` on XGBoost) explains individual predictions --
-per-feature contribution plots plus one worked fraud example -- and a
-preliminary base-vs-behavioral ablation (not Phase 8's full study; no graph
-score exists yet) shows the behavioral tier roughly doubling precision
-(~0.52 → ~0.99) at slightly better recall on this run.
+| Metric | Value |
+|---|---:|
+| ROC-AUC | 0.997 |
+| PR-AUC | 0.970 |
+| Brier score | 0.008 |
+| Alert threshold (calibrated) | 0.10 |
+| Recall / precision at alert threshold | 93.9% / 85.0% |
+| Normal-traffic false-positive rate at alert threshold | 0.3% |
 
-### Output
+Flag rate per label: recall for fraud, false-positive rate for the rest.
 
-`ml/models/`: `xgboost.joblib`, `random_forest.joblib`,
-`isolation_forest.joblib`, `feature_columns.json` (records the exact
-column order each model expects -- a plain array has no column names to
-check against at inference time), `model_comparison.csv`. Committed to the
-repo (under 10MB total) so `backend/app/ml` has something to load without
-everyone re-running the notebook first.
+| Label | at alert threshold (0.10) | at 0.5 | Leave-one-scenario-out recall |
+|---|---:|---:|---:|
+| account_takeover | 95.2% | 90.5% | 84.1% |
+| gambling_network | 100.0% | 100.0% | 0.0% |
+| layering_chain | 100.0% | 99.2% | 92.5% |
+| mule_network | 77.4% | 69.2% | 73.3% |
+| scam_recipient | 97.3% | 94.5% | 82.9% |
+| normal *(not fraud)* | 0.3% | 0.1% | |
+| innocent_bystander *(not fraud)* | 7.6% | 4.2% | |
+| large_new_payee *(not fraud)* | 28.8% | 9.1% | |
+| group_collection *(not fraud)* | 21.4% | 13.5% | |
 
-## Phase 5 — graph intelligence (not started)
+How to read it:
+
+- **The original 0.999+ numbers were inflated** by the generator shortcuts in
+  the table above. On the regenerated data, the same model family scores 0.997
+  ROC-AUC with honest per-scenario recall, and its weak spots are visible.
+- **Look-alikes are the real cost.** A legitimate large payment to a new payee
+  is flagged 28.8% of the time at the alert threshold, and a group collection
+  21.4%. These rates are what to watch as the model or features change.
+- **Leave-one-scenario-out** (trained without a pattern, tested on it)
+  measures generalization to fraud the model never saw. Takeover, layering and
+  scam stay at 83-93%. Gambling drops to 0%: individual bets look like
+  ordinary merchant payments, so it can only be learned from labelled
+  examples.
+- **Calibration** is good where it matters: the 0.9-1.0 bucket is 100% fraud
+  and 0.7-0.9 is 76%. The mid buckets run high, because the test window has
+  less fraud (6.0%) than validation (9.3%), where the calibrator was fitted.
+- **Ablation:** base features alone reach 0.936 ROC / 0.717 PR-AUC; adding the
+  behavioral tier lifts that to 0.997 / 0.970.
+- **Isolation Forest:** 0.895 ROC-AUC with no labels. Above its 99th
+  percentile it flags 56% of takeovers and 49% of layering hops, versus 3.8%
+  of normal traffic.
+- **Shortcut guards** (in `metrics.json`): the strongest single feature,
+  receiver outflow history, reaches 0.92 ROC on its own (inverted). That's a
+  real but no longer decisive signal: fresh mule accounts genuinely haven't
+  sent money yet. Only 1.1% of test gambling receivers appeared in training.
+
+The fraud here is still synthetic and cleaner than real traffic. Treat these
+numbers as a check that the pipeline learns the signal that's there and is
+measured honestly, not as a real-world accuracy claim.

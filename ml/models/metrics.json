@@ -1,0 +1,136 @@
+{
+  "roc_auc": 0.9966,
+  "pr_auc": 0.9699,
+  "brier": 0.0078,
+  "alert_threshold": 0.1,
+  "recall_at_alert_threshold": 0.9391,
+  "precision_at_alert_threshold": 0.8499,
+  "normal_fpr_at_alert_threshold": 0.003,
+  "per_label_flag_rate": {
+    "account_takeover": 0.9524,
+    "gambling_network": 1.0,
+    "group_collection": 0.2143,
+    "innocent_bystander": 0.0756,
+    "large_new_payee": 0.2879,
+    "layering_chain": 1.0,
+    "mule_network": 0.774,
+    "normal": 0.003,
+    "scam_recipient": 0.9726
+  },
+  "per_label_flag_rate_at_0.5": {
+    "account_takeover": 0.9048,
+    "gambling_network": 1.0,
+    "group_collection": 0.1345,
+    "innocent_bystander": 0.042,
+    "large_new_payee": 0.0909,
+    "layering_chain": 0.9917,
+    "mule_network": 0.6918,
+    "normal": 0.0013,
+    "scam_recipient": 0.9452
+  },
+  "calibration": [
+    {
+      "bucket": "[0.00, 0.05)",
+      "n": 10111,
+      "mean_score": 0.0011,
+      "fraud_rate": 0.0025
+    },
+    {
+      "bucket": "[0.05, 0.15)",
+      "n": 126,
+      "mean_score": 0.0772,
+      "fraud_rate": 0.1429
+    },
+    {
+      "bucket": "[0.15, 0.35)",
+      "n": 35,
+      "mean_score": 0.2894,
+      "fraud_rate": 0.3429
+    },
+    {
+      "bucket": "[0.35, 0.55)",
+      "n": 68,
+      "mean_score": 0.4852,
+      "fraud_rate": 0.3235
+    },
+    {
+      "bucket": "[0.55, 0.70)",
+      "n": 3,
+      "mean_score": 0.6667,
+      "fraud_rate": 0.3333
+    },
+    {
+      "bucket": "[0.70, 0.90)",
+      "n": 112,
+      "mean_score": 0.8256,
+      "fraud_rate": 0.7589
+    },
+    {
+      "bucket": "[0.90, 1.00)",
+      "n": 494,
+      "mean_score": 0.9946,
+      "fraud_rate": 1.0
+    }
+  ],
+  "isolation_forest": {
+    "roc_auc": 0.8953,
+    "pr_auc": 0.3377,
+    "flag_rate_above_reason_percentile": {
+      "account_takeover": 0.5556,
+      "gambling_network": 0.3681,
+      "group_collection": 0.0126,
+      "innocent_bystander": 0.0,
+      "large_new_payee": 0.0758,
+      "layering_chain": 0.4917,
+      "mule_network": 0.2808,
+      "normal": 0.0375,
+      "scam_recipient": 0.4178
+    }
+  },
+  "ablation": {
+    "base_only": {
+      "roc_auc": 0.9355,
+      "pr_auc": 0.7168
+    },
+    "base_plus_behavioral": {
+      "roc_auc": 0.9966,
+      "pr_auc": 0.9699
+    }
+  },
+  "leave_one_scenario_out": {
+    "account_takeover": {
+      "recall": 0.8413,
+      "n_test": 63
+    },
+    "gambling_network": {
+      "recall": 0.0,
+      "n_test": 182
+    },
+    "layering_chain": {
+      "recall": 0.925,
+      "n_test": 120
+    },
+    "mule_network": {
+      "recall": 0.7329,
+      "n_test": 146
+    },
+    "scam_recipient": {
+      "recall": 0.8288,
+      "n_test": 146
+    }
+  },
+  "strongest_single_features_test_roc": {
+    "receiver_outflow_total_hist": 0.0769,
+    "receiver_device_shared_account_count": 0.1657,
+    "receiver_account_age_days": 0.1881,
+    "receiver_minutes_since_first_seen": 0.1954,
+    "amount": 0.804
+  },
+  "test_fraud_receivers_seen_in_train": {
+    "account_takeover": 0.381,
+    "gambling_network": 0.011,
+    "layering_chain": 0.2167,
+    "mule_network": 0.2603,
+    "scam_recipient": 0.4178
+  }
+}

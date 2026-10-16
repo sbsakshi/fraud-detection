@@ -14,8 +14,8 @@ COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend/ ./backend/
-# Only the trained artifacts -- not ml/data (large CSVs), ml/notebooks, or
-# ml/synthetic, none of which the running app needs.
+# Only the trained artifacts -- not ml/data (large CSVs) or the training
+# code, none of which the running app needs (see also .dockerignore).
 COPY ml/models/ ./ml/models/
 
 WORKDIR /app/backend

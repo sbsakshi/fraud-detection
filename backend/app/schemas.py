@@ -26,6 +26,9 @@ class AccountCreate(BaseModel):
     device_id: str | None = None
     true_label: str | None = None
     is_active: bool = True
+    # When the account was opened at the bank. Account-age features depend on
+    # it, so a replay of historical data must send it; omitted = now.
+    created_at: datetime | None = None
 
 
 class AccountOut(BaseModel):
@@ -88,6 +91,11 @@ class CaseOut(BaseModel):
     id: int
     status: CaseStatus
     severity: CaseSeverity
+
+
+class FraudConfirmation(BaseModel):
+    actor: str = Field(min_length=1, max_length=128)  # the investigator confirming it
+    note: str | None = None
 
 
 class TransactionScoreOut(BaseModel):

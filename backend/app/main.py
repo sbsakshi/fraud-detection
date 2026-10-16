@@ -10,7 +10,7 @@ from .config import settings
 from .db import check_db_connection
 from .ml import get_models
 from .ml.model_loader import ModelsNotTrainedError
-from .routers import accounts, graph, transactions
+from .routers import accounts, cases, graph, transactions
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Load once at startup, not per-request. A missing/untrained model
     # doesn't stop the app from serving its health check -- POST
-    # /transactions just 503s until someone runs the training notebook.
+    # /transactions just 503s until someone runs `python -m ml.train`.
     try:
         get_models()
         logger.info("ML models loaded from ml/models/")
@@ -40,6 +40,7 @@ app.add_middleware(
 app.include_router(accounts.router)
 app.include_router(transactions.router)
 app.include_router(graph.router)
+app.include_router(cases.router)
 
 
 @app.exception_handler(ModelsNotTrainedError)

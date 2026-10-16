@@ -1,8 +1,9 @@
 from datetime import timedelta
 
+import numpy as np
 import pandas as pd
 
-from ml.synthetic.config import DATE_RANGE_DAYS, START_DATE
+from ml.synthetic.config import DATE_RANGE_DAYS, END_DATE, START_DATE
 
 
 def random_base_timestamp(rng, hour_low: int = 6, hour_high: int = 23, max_day_offset: int | None = None) -> pd.Timestamp:
@@ -17,14 +18,55 @@ def random_base_timestamp(rng, hour_low: int = 6, hour_high: int = 23, max_day_o
     return pd.Timestamp(START_DATE) + timedelta(days=day_offset, hours=hour, minutes=minute, seconds=second)
 
 
-def late_night_timestamp(rng, days_before_end: int = 10) -> pd.Timestamp:
-    """A timestamp in the small hours, within the last `days_before_end` days —
-    used for account-takeover drains, which tend to happen off-hours and recently."""
-    day_offset = int(rng.integers(DATE_RANGE_DAYS - days_before_end, DATE_RANGE_DAYS + 1))
-    hour = int(rng.integers(0, 5))
-    minute = int(rng.integers(0, 60))
-    second = int(rng.integers(0, 60))
-    return pd.Timestamp(START_DATE) + timedelta(days=day_offset, hours=hour, minutes=minute, seconds=second)
+def account_takeover_timestamp(rng, night_rate: float) -> pd.Timestamp:
+    """Any day in the scenario window; small hours with probability `night_rate`, else daytime.
+
+    Takeovers used to be pinned to the last 10 days between midnight and 5am,
+    which put every one of them in the test split by construction.
+    """
+    day_offset = int(rng.integers(0, DATE_RANGE_DAYS))
+    hour = int(rng.integers(0, 6)) if rng.random() < night_rate else int(rng.integers(6, 24))
+    return pd.Timestamp(START_DATE) + timedelta(
+        days=day_offset, hours=hour, minutes=int(rng.integers(0, 60)), seconds=int(rng.integers(0, 60))
+    )
+
+
+def random_timestamp_after(rng, earliest: pd.Timestamp, hour_low: int = 6, hour_high: int = 23) -> pd.Timestamp:
+    """A daytime timestamp inside the scenario window, no earlier than `earliest`."""
+    window_start = pd.Timestamp(START_DATE)
+    first_day = max(window_start, pd.Timestamp(earliest).normalize() + timedelta(days=1))
+    if first_day > pd.Timestamp(END_DATE):
+        return pd.Timestamp(earliest) + timedelta(minutes=int(rng.integers(30, 600)))
+    span = max(0, (pd.Timestamp(END_DATE) - first_day).days)
+    day = first_day + timedelta(days=int(rng.integers(0, span + 1)))
+    return day + timedelta(hours=int(rng.integers(hour_low, hour_high)), minutes=int(rng.integers(0, 60)))
+
+
+def created_before(rng, ts: pd.Timestamp, min_days: int, max_days: int) -> pd.Timestamp:
+    """An account-opening time `min_days`..`max_days` before `ts` (never after it)."""
+    delta = timedelta(days=int(rng.integers(min_days, max_days + 1)), hours=int(rng.integers(1, 12)))
+    return pd.Timestamp(ts) - delta
+
+
+def individuals_before(accounts_df: pd.DataFrame, before: pd.Timestamp, unlabelled: bool = False) -> np.ndarray:
+    """upi_ids of individual accounts that already existed at `before`."""
+    mask = (accounts_df["account_type"] == "individual") & (pd.to_datetime(accounts_df["created_at"]) < before)
+    if unlabelled:
+        mask &= accounts_df["true_label"].isna()
+    return accounts_df.loc[mask, "upi_id"].to_numpy()
+
+
+def pick_aged_account(rng, accounts_df: pd.DataFrame, before: pd.Timestamp, taken: set[str], min_age_days: int = 90):
+    """An existing, unlabelled individual account at least `min_age_days` old at `before`,
+    not already used by another scenario -- a recruited or bought account. Returns its
+    accounts-table row as a dict, or None if none is left."""
+    pool = individuals_before(accounts_df, pd.Timestamp(before) - timedelta(days=min_age_days), unlabelled=True)
+    pool = [u for u in pool if u not in taken]
+    if not pool:
+        return None
+    upi = pool[int(rng.integers(0, len(pool)))]
+    taken.add(upi)
+    return accounts_df.loc[accounts_df["upi_id"] == upi].iloc[0].to_dict()
 
 
 def shortly_after(rng, ts: pd.Timestamp, min_seconds: int = 30, max_seconds: int = 600) -> pd.Timestamp:

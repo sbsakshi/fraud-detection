@@ -30,5 +30,6 @@ def create_account_endpoint(payload: AccountCreate, db: Session = Depends(get_db
         device_id=payload.device_id,
         true_label=payload.true_label,
         is_active=payload.is_active,
+        created_at=payload.created_at,
     )
     return AccountOut.model_validate(account)

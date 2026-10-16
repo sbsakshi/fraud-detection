@@ -1,7 +1,7 @@
+import math
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from app.ml.feature_engineering import NO_HISTORY
 from app.ml.live_features import compute_live_features
 from app.models.enums import TransactionStatus
 from app.models.transaction import Transaction
@@ -35,7 +35,7 @@ def test_first_transaction_has_no_history_sentinels(db_session, make_account):
     )
     assert features["sender_txn_count_hist"] == 0
     assert features["is_first_time_beneficiary"] == 1
-    assert features["amount_zscore_sender"] == NO_HISTORY
+    assert math.isnan(features["amount_zscore_sender"])
     assert features["is_new_device_for_sender"] == 1
     assert 29.9 < features["sender_account_age_days"] < 30.1
 

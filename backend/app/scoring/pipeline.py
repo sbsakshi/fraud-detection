@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.graph import GraphContext, GraphTransaction, evaluate_graph
 from app.graph.live_graph import get_transaction_graph, persist_edge_writes
-from app.ml import compute_live_features, explain_ml_score, score_transaction
+from app.ml import anomaly_reason, compute_live_features, explain_ml_score, score_transaction
 from app.models.account import Account
 from app.models.case import Case
 from app.models.case_event import CaseEvent
@@ -36,9 +36,8 @@ from app.scoring.intervention import decide_intervention
 
 # Which intervention levels are severe enough to open an investigator case,
 # and what severity/status that case starts at. ESCALATE opens the case
-# already-escalated (and, via get_known_fraud_upis, feeds its receiver back
-# into future scoring as a known-fraud account); RESTRICT opens it for
-# review without that immediate escalation.
+# already-escalated; RESTRICT opens it for review. Neither feeds the receiver
+# back into scoring until an investigator confirms it (see app.routers.cases).
 CASE_OPENING_LEVELS: dict[InterventionLevel, tuple[CaseStatus, CaseSeverity]] = {
     InterventionLevel.RESTRICT: (CaseStatus.OPEN, CaseSeverity.HIGH),
     InterventionLevel.ESCALATE: (CaseStatus.ESCALATED, CaseSeverity.CRITICAL),
@@ -84,15 +83,15 @@ def score_and_persist_transaction(
     # --- 2. ML (DB read-only) ---
     ml_features = compute_live_features(db, sender, receiver, amount, device_id, transaction_type, created_at)
     ml_scores = score_transaction(ml_features)
-    # XGBoost and Random Forest were near-identical in Phase 4's evaluation
-    # (>0.999 ROC-AUC each); averaging them is simple and doesn't lean on
-    # either one's idiosyncrasies. Isolation Forest's unbounded anomaly score
-    # isn't on the same probability scale, so it stays a separate reason
-    # source (via explain_ml_score's SHAP contributions) rather than being
-    # blended numerically into ml_score -- Phase 8's ablation is where a more
-    # deliberate ensemble weighting, if warranted, should be decided.
-    ml_score = (ml_scores["xgboost_score"] + ml_scores["random_forest_score"]) / 2
-    ml_reasons = explain_ml_score(ml_features, top_k=3)
+    # The calibrated XGBoost probability (see app.ml.model_loader). The
+    # Isolation Forest isn't blended in -- it's unsupervised and not a
+    # probability -- but surfaces as an informational reason code when the
+    # transaction is unusual versus normal traffic.
+    ml_score = ml_scores["ml_score"]
+    ml_reasons = explain_ml_score(ml_features, top_k=3, ml_score=ml_score)
+    unusual = anomaly_reason(ml_scores)
+    if unusual is not None:
+        ml_reasons.append(unusual)
 
     # --- 3. Graph (evaluated against pre-transaction state) ---
     transaction_graph = get_transaction_graph()

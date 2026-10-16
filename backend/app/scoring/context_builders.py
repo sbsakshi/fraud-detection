@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.account import Account
 from app.models.case import Case
-from app.models.enums import CaseStatus
+from app.models.case_event import CaseEvent
 from app.models.transaction import Transaction
 from app.rules import RuleContext, RuleTransaction
 
@@ -30,20 +30,25 @@ def _as_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def get_known_fraud_upis(db: Session) -> frozenset[str]:
-    """Receivers of escalated cases -- confirmed fraud beneficiaries fed back into scoring.
+FRAUD_CONFIRMED_EVENT = "fraud_confirmed"
 
-    A real feedback loop: once a transaction is escalated into a case (see
-    `app.scoring.pipeline`), its receiver becomes a known-fraud beneficiary
-    for every transaction scored after that, both for
+
+def get_known_fraud_upis(db: Session) -> frozenset[str]:
+    """Receivers of cases an investigator confirmed as fraud, fed back into scoring.
+
+    Once confirmed (`POST /cases/{id}/confirm-fraud`), the receiver is a
+    known-fraud beneficiary for every transaction scored after that, both for
     `rules.known_fraud_beneficiary` (direct hit) and
-    `graph.fraud_cluster_exposure` (one or two hops away).
+    `graph.fraud_cluster_exposure` (one or two hops away). An automatic
+    escalation alone doesn't count: that would let the system's own,
+    unreviewed decisions become its future inputs.
     """
     stmt = (
         select(Account.upi_id)
         .join(Transaction, Transaction.receiver_account_id == Account.id)
         .join(Case, Case.transaction_id == Transaction.id)
-        .where(Case.status == CaseStatus.ESCALATED)
+        .join(CaseEvent, CaseEvent.case_id == Case.id)
+        .where(CaseEvent.event_type == FRAUD_CONFIRMED_EVENT)
         .distinct()
     )
     return frozenset(db.execute(stmt).scalars().all())

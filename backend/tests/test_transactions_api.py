@@ -269,3 +269,18 @@ def test_stats_reflect_scored_transactions_and_open_cases(client: TestClient):
     assert 0.0 <= stats["avg_fused_score"] <= 1.0
     if escalation["case"] is not None:
         assert stats["active_cases"] >= 1
+
+
+def test_account_created_at_round_trips(client: TestClient):
+    body = create_account(client, "old@bank", device_id="d1", created_at="2023-03-01T09:30:00Z")
+    assert body["created_at"].startswith("2023-03-01T09:30:00")
+
+
+def test_account_created_at_defaults_to_now(client: TestClient):
+    body = create_account(client, "new@bank", device_id="d1")
+    assert body["created_at"][:4] >= "2026"
+
+
+def test_confirm_fraud_on_missing_case_is_404(client: TestClient):
+    resp = client.post("/cases/999/confirm-fraud", json={"actor": "analyst@bank"})
+    assert resp.status_code == 404

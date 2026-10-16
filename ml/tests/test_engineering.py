@@ -1,6 +1,8 @@
+import math
+
 import pandas as pd
 
-from ml.features.engineering import BASE_FEATURES, BEHAVIORAL_FEATURES, NO_HISTORY, build_features
+from ml.features.engineering import BASE_FEATURES, BEHAVIORAL_FEATURES, NULLABLE_FEATURES, build_features
 
 
 def make_accounts(rows: list[dict]) -> pd.DataFrame:
@@ -34,12 +36,14 @@ def test_first_transaction_has_no_history_sentinels():
     row = features.iloc[0]
     assert row["sender_txn_count_hist"] == 0
     assert row["is_first_time_beneficiary"] == 1
-    assert row["amount_zscore_sender"] == NO_HISTORY
-    assert row["amount_to_sender_avg_ratio"] == NO_HISTORY
-    assert row["minutes_since_sender_last_sent"] == NO_HISTORY
-    assert row["minutes_since_sender_last_received"] == NO_HISTORY
+    assert math.isnan(row["amount_zscore_sender"])
+    assert math.isnan(row["amount_to_sender_avg_ratio"])
+    assert math.isnan(row["minutes_since_sender_last_sent"])
+    assert math.isnan(row["minutes_since_sender_last_received"])
     assert row["is_new_device_for_sender"] == 1
     assert row["device_shared_account_count"] == 0
+    assert math.isnan(row["sender_minutes_since_first_seen"])
+    assert math.isnan(row["receiver_minutes_since_first_seen"])
 
 
 def test_no_future_leakage_regardless_of_input_order():
@@ -133,6 +137,44 @@ def test_is_fraud_target_matches_true_label_presence():
     assert features.set_index("txn_ref").loc["T2", "is_fraud"] == 0
 
 
+def test_receiver_24h_window_and_first_seen():
+    accounts = make_accounts(
+        [{"upi_id": f"s{i}@x", "device_id": f"d{i}", "created_at": "2026-01-01"} for i in range(3)]
+        + [{"upi_id": "r@x", "device_id": "dr", "created_at": "2026-01-01"}]
+    )
+    t0 = pd.Timestamp("2026-02-01 12:00:00")
+    rows = [
+        make_txn(txn_ref="T0", sender_upi_id="s0@x", receiver_upi_id="r@x", amount=100.0, device_id="d0",
+                 created_at=t0 - pd.Timedelta(hours=30)),  # outside 24h
+        make_txn(txn_ref="T1", sender_upi_id="s1@x", receiver_upi_id="r@x", amount=100.0, device_id="d1",
+                 created_at=t0 - pd.Timedelta(hours=5)),
+        make_txn(txn_ref="T2", sender_upi_id="s2@x", receiver_upi_id="r@x", amount=100.0, device_id="d2",
+                 created_at=t0),
+    ]
+    row = build_features(pd.DataFrame(rows), accounts).set_index("txn_ref").loc["T2"]
+    assert row["receiver_unique_senders_24h"] == 2  # s1 + the candidate's own sender
+    assert row["receiver_txn_count_24h"] == 1
+    assert row["receiver_txn_count_1h"] == 0
+    assert row["receiver_minutes_since_first_seen"] == 30 * 60
+
+
+def test_receiver_device_shared_account_count():
+    accounts = make_accounts(
+        [{"upi_id": u, "device_id": "x", "created_at": "2026-01-01"} for u in ("m1@x", "m2@x", "v@x", "c@x")]
+    )
+    rows = [
+        # m1 and m2 both send from the herder's phone.
+        make_txn(txn_ref="T1", sender_upi_id="m1@x", receiver_upi_id="c@x", amount=10.0, device_id="herder",
+                 created_at="2026-02-01 10:00:00"),
+        make_txn(txn_ref="T2", sender_upi_id="m2@x", receiver_upi_id="c@x", amount=10.0, device_id="herder",
+                 created_at="2026-02-01 10:05:00"),
+        make_txn(txn_ref="T3", sender_upi_id="v@x", receiver_upi_id="m1@x", amount=10.0, device_id="dv",
+                 created_at="2026-02-01 10:10:00"),
+    ]
+    row = build_features(pd.DataFrame(rows), accounts).set_index("txn_ref").loc["T3"]
+    assert row["receiver_device_shared_account_count"] == 2
+
+
 def test_feature_columns_have_no_overlap_and_no_nulls():
     assert set(BASE_FEATURES).isdisjoint(BEHAVIORAL_FEATURES)
     accounts = make_accounts([{"upi_id": "a@x", "device_id": "d1", "created_at": "2026-01-01"},
@@ -142,4 +184,5 @@ def test_feature_columns_have_no_overlap_and_no_nulls():
                   device_id="d1", created_at="2026-02-01 10:00:00")]
     )
     features = build_features(txns, accounts)
-    assert not features[BASE_FEATURES + BEHAVIORAL_FEATURES].isna().any().any()
+    non_nullable = [c for c in BASE_FEATURES + BEHAVIORAL_FEATURES if c not in NULLABLE_FEATURES]
+    assert not features[non_nullable].isna().any().any()

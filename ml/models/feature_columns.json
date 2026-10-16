@@ -21,6 +21,8 @@
     "receiver_unique_senders_hist",
     "receiver_unique_senders_1h",
     "receiver_txn_count_1h",
+    "receiver_unique_senders_24h",
+    "receiver_txn_count_24h",
     "sender_inflow_total_hist",
     "sender_outflow_total_hist",
     "sender_inflow_outflow_ratio",
@@ -32,8 +34,21 @@
     "sender_distinct_devices_hist",
     "is_new_device_for_sender",
     "device_shared_account_count",
+    "receiver_device_shared_account_count",
+    "sender_minutes_since_first_seen",
+    "receiver_minutes_since_first_seen",
     "sender_is_merchant",
     "receiver_is_merchant"
+  ],
+  "nullable_features": [
+    "sender_account_age_days",
+    "receiver_account_age_days",
+    "amount_zscore_sender",
+    "amount_to_sender_avg_ratio",
+    "minutes_since_sender_last_sent",
+    "minutes_since_sender_last_received",
+    "sender_minutes_since_first_seen",
+    "receiver_minutes_since_first_seen"
   ],
   "all_features": [
     "amount",
@@ -55,6 +70,8 @@
     "receiver_unique_senders_hist",
     "receiver_unique_senders_1h",
     "receiver_txn_count_1h",
+    "receiver_unique_senders_24h",
+    "receiver_txn_count_24h",
     "sender_inflow_total_hist",
     "sender_outflow_total_hist",
     "sender_inflow_outflow_ratio",
@@ -66,6 +83,9 @@
     "sender_distinct_devices_hist",
     "is_new_device_for_sender",
     "device_shared_account_count",
+    "receiver_device_shared_account_count",
+    "sender_minutes_since_first_seen",
+    "receiver_minutes_since_first_seen",
     "sender_is_merchant",
     "receiver_is_merchant"
   ]

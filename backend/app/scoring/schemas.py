@@ -17,5 +17,5 @@ class ReasonCodeResult:
     code: str
     template: str
     details: dict
-    contribution: float
+    contribution: float | None  # None = informational, never moves a score
     source: ReasonCodeSource

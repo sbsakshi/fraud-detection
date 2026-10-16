@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -34,6 +36,7 @@ def create_account(
     device_id: str | None = None,
     true_label: str | None = None,
     is_active: bool = True,
+    created_at: datetime | None = None,
 ) -> Account:
     if get_account_by_upi(db, upi_id) is not None:
         raise HTTPException(status_code=409, detail=f"Account with upi_id={upi_id!r} already exists.")
@@ -48,6 +51,8 @@ def create_account(
         true_label=true_label,
         is_active=is_active,
     )
+    if created_at is not None:
+        account.created_at = created_at if created_at.tzinfo is not None else created_at.replace(tzinfo=timezone.utc)
     db.add(account)
     db.commit()
     db.refresh(account)

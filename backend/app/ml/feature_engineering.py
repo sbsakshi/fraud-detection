@@ -38,13 +38,22 @@ dwarfs a mule collector's. Without an account-type signal, a model has no
 way to tell "popular merchant" apart from "mule collector" using fan-in
 alone.
 
-Missing-history sentinel: continuous features that need prior activity to
-mean anything (an average, a "time since", an account age) use `-1.0` when
-that history doesn't exist yet, rather than `NaN` -- scikit-learn's
-`RandomForestClassifier`/`IsolationForest` reject `NaN` outright, and `-1`
-is a value below every real observation in these features, so trees can
-still carve it into its own split instead of it silently corrupting a mean.
-Count/sum features have no such gap: zero history genuinely means zero.
+Missing history is `NaN` (`NO_HISTORY`), listed in `NULLABLE_FEATURES`:
+continuous features that need prior activity to mean anything (an average,
+a z-score, a "time since") have no honest value without it. An earlier
+version used `-1`, which collided with real observations (a z-score of
+exactly -1 is ordinary). XGBoost learns a default branch for missing values
+natively; ml/train.py imputes them (with missing-indicator columns) only for
+the Isolation Forest, which can't. Count/sum features have no such gap: zero
+history genuinely means zero.
+
+Graph-flavoured features computed in the same pass:
+`receiver_unique_senders_24h`/`receiver_txn_count_24h` (fan-in burst over a
+day, not just an hour), `*_minutes_since_first_seen` (how long an account has
+been active in the payment graph -- unlike account age it doesn't depend on
+a `created_at` the bank supplies), and `receiver_device_shared_account_count`
+(the most accounts sharing any device the receiver has sent from -- a mule
+herder running several accounts from one phone).
 """
 
 from __future__ import annotations
@@ -58,7 +67,7 @@ import pandas as pd
 
 ONE_HOUR = timedelta(hours=1)
 TWENTY_FOUR_HOURS = timedelta(hours=24)
-NO_HISTORY = -1.0
+NO_HISTORY = float("nan")
 # Below this many prior transactions, a sender's own "average"/"std" isn't
 # trustworthy enough to compare the current amount against.
 MIN_HISTORY_FOR_AMOUNT_STATS = 3
@@ -86,6 +95,8 @@ BEHAVIORAL_FEATURES = [
     "receiver_unique_senders_hist",
     "receiver_unique_senders_1h",
     "receiver_txn_count_1h",
+    "receiver_unique_senders_24h",
+    "receiver_txn_count_24h",
     "sender_inflow_total_hist",
     "sender_outflow_total_hist",
     "sender_inflow_outflow_ratio",
@@ -97,11 +108,26 @@ BEHAVIORAL_FEATURES = [
     "sender_distinct_devices_hist",
     "is_new_device_for_sender",
     "device_shared_account_count",
+    "receiver_device_shared_account_count",
+    "sender_minutes_since_first_seen",
+    "receiver_minutes_since_first_seen",
     "sender_is_merchant",
     "receiver_is_merchant",
 ]
 
 FEATURE_COLUMNS = BASE_FEATURES + BEHAVIORAL_FEATURES
+
+# Features that are NaN when the history they summarize doesn't exist yet.
+NULLABLE_FEATURES = [
+    "sender_account_age_days",
+    "receiver_account_age_days",
+    "amount_zscore_sender",
+    "amount_to_sender_avg_ratio",
+    "minutes_since_sender_last_sent",
+    "minutes_since_sender_last_received",
+    "sender_minutes_since_first_seen",
+    "receiver_minutes_since_first_seen",
+]
 
 # Carried alongside the features for evaluation/analysis, never fed to a model.
 METADATA_COLUMNS = ["txn_ref", "sender_upi_id", "receiver_upi_id", "created_at", "true_label", "scenario"]
@@ -110,6 +136,7 @@ METADATA_COLUMNS = ["txn_ref", "sender_upi_id", "receiver_upi_id", "created_at",
 @dataclass
 class _AccountState:
     created_at: pd.Timestamp | None = None
+    first_seen_at: pd.Timestamp | None = None
     # As sender.
     sent_count: int = 0
     sent_sum: float = 0.0
@@ -123,7 +150,11 @@ class _AccountState:
     received_sum: float = 0.0
     received_senders: set[str] = field(default_factory=set)
     last_received_at: pd.Timestamp | None = None
-    received_window: deque = field(default_factory=deque)  # (ts, sender_upi_id), pruned to 1h
+    received_window: deque = field(default_factory=deque)  # (ts, sender_upi_id), pruned to 24h
+
+
+def _minutes_since(ts: pd.Timestamp, earlier: pd.Timestamp | None) -> float:
+    return (ts - earlier).total_seconds() / 60.0 if earlier is not None else NO_HISTORY
 
 
 def _prune(window: deque, cutoff: pd.Timestamp) -> None:
@@ -137,11 +168,11 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
     `transactions`/`accounts` are the raw Phase 2 synthetic-dataset frames
     (i.e. `pd.read_csv("ml/data/transactions.csv")` and `accounts.csv`).
     """
-    account_created_at = dict(zip(accounts["upi_id"], pd.to_datetime(accounts["created_at"], utc=True)))
+    account_created_at = dict(zip(accounts["upi_id"], pd.to_datetime(accounts["created_at"], utc=True, format="ISO8601")))
     account_is_merchant = dict(zip(accounts["upi_id"], accounts["account_type"] == "merchant"))
 
     txns = transactions.copy()
-    txns["created_at"] = pd.to_datetime(txns["created_at"], utc=True)
+    txns["created_at"] = pd.to_datetime(txns["created_at"], utc=True, format="ISO8601")
     txns = txns.sort_values("created_at", kind="stable").reset_index(drop=True)
 
     states: dict[str, _AccountState] = {}
@@ -168,7 +199,7 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
         r = state_for(receiver)
 
         _prune(s.sent_window, ts - TWENTY_FOUR_HOURS)
-        _prune(r.received_window, ts - ONE_HOUR)
+        _prune(r.received_window, ts - TWENTY_FOUR_HOURS)
 
         # --- base ---
         base = {
@@ -200,8 +231,11 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
 
         # --- beneficiary novelty / counterparty spread ---
         is_first_time_beneficiary = int(receiver not in s.sent_receivers)
-        receiver_window_senders = {snd for _, snd in r.received_window}
-        receiver_unique_senders_1h = len(receiver_window_senders | {sender})
+        hour_ago = ts - ONE_HOUR
+        receiver_senders_1h = {snd for t, snd in r.received_window if t >= hour_ago}
+        receiver_unique_senders_1h = len(receiver_senders_1h | {sender})
+        receiver_txn_count_1h = sum(1 for t, _ in r.received_window if t >= hour_ago)
+        receiver_unique_senders_24h = len({snd for _, snd in r.received_window} | {sender})
 
         # --- inflow/outflow shape ---
         # +1 smoothing avoids a divide-by-zero when an account has never sent/received yet.
@@ -219,6 +253,9 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
         # --- device ---
         is_new_device_for_sender = int(device_id not in s.sent_devices)
         device_shared_account_count = len(device_users.get(device_id, ()))
+        receiver_device_shared_account_count = max(
+            (len(device_users.get(d, ())) for d in r.sent_devices), default=0
+        )
 
         behavioral = {
             "sender_account_age_days": (
@@ -238,7 +275,9 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
             "sender_unique_receivers_hist": len(s.sent_receivers),
             "receiver_unique_senders_hist": len(r.received_senders),
             "receiver_unique_senders_1h": receiver_unique_senders_1h,
-            "receiver_txn_count_1h": len(r.received_window),
+            "receiver_txn_count_1h": receiver_txn_count_1h,
+            "receiver_unique_senders_24h": receiver_unique_senders_24h,
+            "receiver_txn_count_24h": len(r.received_window),
             "sender_inflow_total_hist": s.received_sum,
             "sender_outflow_total_hist": s.sent_sum,
             "sender_inflow_outflow_ratio": sender_inflow_outflow_ratio,
@@ -250,6 +289,9 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
             "sender_distinct_devices_hist": len(s.sent_devices),
             "is_new_device_for_sender": is_new_device_for_sender,
             "device_shared_account_count": device_shared_account_count,
+            "receiver_device_shared_account_count": receiver_device_shared_account_count,
+            "sender_minutes_since_first_seen": _minutes_since(ts, s.first_seen_at),
+            "receiver_minutes_since_first_seen": _minutes_since(ts, r.first_seen_at),
             "sender_is_merchant": int(account_is_merchant.get(sender, False)),
             "receiver_is_merchant": int(account_is_merchant.get(receiver, False)),
         }
@@ -268,6 +310,10 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
 
         # Update state AFTER computing this row's features -- never let a
         # transaction see itself in its own history.
+        if s.first_seen_at is None:
+            s.first_seen_at = ts
+        if r.first_seen_at is None:
+            r.first_seen_at = ts
         s.sent_count += 1
         s.sent_sum += amount
         s.sent_sumsq += amount * amount

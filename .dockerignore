@@ -1,0 +1,19 @@
+# Build contexts: the repo root (backend image) and frontend/ (frontend image).
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ipynb_checkpoints
+**/node_modules
+**/dist
+.git
+.github
+.vscode
+.idea
+**/.env
+*.log
+# The backend image only needs ml/models; skip the large CSVs and the rest of ml/.
+ml/data
+ml/synthetic
+ml/features
+ml/tests

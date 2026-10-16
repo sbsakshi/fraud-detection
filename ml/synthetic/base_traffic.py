@@ -4,10 +4,13 @@ import numpy as np
 import pandas as pd
 
 from ml.synthetic.config import (
+    BURN_IN_DAYS,
     DATE_RANGE_DAYS,
+    END_DATE,
+    HISTORY_START,
     MERCHANT_ACCOUNT_RATE,
     MERCHANT_CATEGORIES,
-    START_DATE,
+    NEW_ACCOUNT_RATE,
 )
 from ml.synthetic.helpers import new_account_number, new_device_id, new_ifsc, new_upi_id, pick_bank, slugify
 
@@ -24,12 +27,19 @@ _HOURLY_WEIGHTS = np.array(
 _HOURLY_PROBS = _HOURLY_WEIGHTS / _HOURLY_WEIGHTS.sum()
 
 
+TOTAL_DAYS = BURN_IN_DAYS + DATE_RANGE_DAYS
+
+
+def sample_hours(rng: np.random.Generator, n: int) -> np.ndarray:
+    return rng.choice(24, size=n, p=_HOURLY_PROBS)
+
+
 def _random_timestamps(rng: np.random.Generator, n: int) -> pd.Series:
-    day_offsets = rng.integers(0, DATE_RANGE_DAYS + 1, size=n)
-    hours = rng.choice(24, size=n, p=_HOURLY_PROBS)
+    day_offsets = rng.integers(0, TOTAL_DAYS + 1, size=n)
+    hours = sample_hours(rng, n)
     minutes = rng.integers(0, 60, size=n)
     seconds = rng.integers(0, 60, size=n)
-    base = pd.Timestamp(START_DATE)
+    base = pd.Timestamp(HISTORY_START)
     return pd.to_datetime(
         [
             base + timedelta(days=int(d), hours=int(h), minutes=int(mi), seconds=int(s))
@@ -38,10 +48,31 @@ def _random_timestamps(rng: np.random.Generator, n: int) -> pd.Series:
     )
 
 
+def push_after(rng: np.random.Generator, timestamps: pd.Series, earliest: pd.Series) -> pd.Series:
+    """Move any timestamp earlier than `earliest` to a random later day, keeping its time of day.
+
+    An account can't transact before it exists; a naive uniform draw over the
+    window ignores that and produces negative account ages.
+    """
+    ts = pd.Series(pd.to_datetime(timestamps)).reset_index(drop=True)
+    earliest = pd.Series(pd.to_datetime(earliest)).reset_index(drop=True)
+    bad = ts < earliest
+    if not bad.any():
+        return ts
+    end = pd.Timestamp(END_DATE)
+    time_of_day = ts[bad] - ts[bad].dt.normalize()
+    first_day = earliest[bad].dt.normalize() + pd.Timedelta(days=1)
+    span_days = ((end - first_day).dt.days).clip(lower=0)
+    offsets = pd.to_timedelta(np.floor(rng.random(int(bad.sum())) * (span_days.to_numpy() + 1)), unit="D")
+    moved = first_day + offsets + time_of_day
+    ts[bad] = moved.where(moved >= earliest[bad], earliest[bad] + pd.Timedelta(minutes=5))
+    return ts
+
+
 def generate_accounts(rng: np.random.Generator, faker, n: int, account_counter) -> pd.DataFrame:
     rows = []
-    account_age_start = START_DATE - timedelta(days=3 * 365)
-    max_created_offset = (pd.Timestamp(START_DATE) - pd.Timestamp(account_age_start)).days
+    account_age_start = HISTORY_START - timedelta(days=3 * 365)
+    max_created_offset = (pd.Timestamp(HISTORY_START) - pd.Timestamp(account_age_start)).days
 
     for _ in range(n):
         is_merchant = rng.random() < MERCHANT_ACCOUNT_RATE
@@ -57,8 +88,14 @@ def generate_accounts(rng: np.random.Generator, faker, n: int, account_counter) 
             account_type = "individual"
             slug = slugify(owner_name.split()[0])
 
-        created_offset = int(rng.integers(0, max_created_offset + 1))
-        created_at = pd.Timestamp(account_age_start) + timedelta(days=created_offset)
+        if rng.random() < NEW_ACCOUNT_RATE:
+            # Opened during the data window -- a legitimate new account.
+            created_at = pd.Timestamp(HISTORY_START) + timedelta(
+                days=int(rng.integers(0, TOTAL_DAYS)), hours=int(rng.integers(8, 20))
+            )
+        else:
+            created_offset = int(rng.integers(0, max_created_offset + 1))
+            created_at = pd.Timestamp(account_age_start) + timedelta(days=created_offset)
 
         # Heavy-tailed activity level: most accounts transact rarely, a few (mostly
         # merchants) transact constantly. This is what makes velocity/fan-in features
@@ -110,7 +147,9 @@ def generate_normal_transactions(rng: np.random.Generator, accounts_df: pd.DataF
     amounts = np.where(receiver_is_merchant, p2m_amounts, p2p_amounts)
     amounts = np.clip(amounts, 1.0, 200_000.0).round(2)
 
-    timestamps = _random_timestamps(rng, n)
+    created = pd.to_datetime(accounts_df["created_at"]).to_numpy()
+    earliest = np.maximum(created[sender_idx], created[receiver_idx])
+    timestamps = push_after(rng, _random_timestamps(rng, n), pd.Series(earliest))
 
     sender_upi = accounts_df["upi_id"].to_numpy()[sender_idx]
     receiver_upi = accounts_df["upi_id"].to_numpy()[receiver_idx]

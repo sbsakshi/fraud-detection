@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from faker import Faker
 
+from ml.synthetic import legit_patterns
 from ml.synthetic.base_traffic import generate_accounts, generate_normal_transactions
 from ml.synthetic.config import NUM_ACCOUNTS, NUM_BASE_TRANSACTIONS, OUTPUT_DIR, SEED
 from ml.synthetic.helpers import Counter
@@ -83,6 +84,9 @@ def generate(seed: int = SEED) -> tuple[pd.DataFrame, pd.DataFrame]:
     print(f"Generating {NUM_BASE_TRANSACTIONS} base transactions...")
     txn_frames = [generate_normal_transactions(rng, accounts_df, NUM_BASE_TRANSACTIONS, txn_counter)]
 
+    print("Generating legitimate look-alike patterns (large_new_payee, group_collection)...")
+    txn_frames.append(legit_patterns.generate(rng, accounts_df, txn_counter))
+
     for module in LABELLED_SCENARIOS:
         print(f"Injecting scenario: {module.SCENARIO}...")
         new_accounts_df, new_txns_df, account_updates = module.inject(
@@ -105,8 +109,23 @@ def generate(seed: int = SEED) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     accounts_df = accounts_df[ACCOUNT_COLUMNS].reset_index(drop=True)
     transactions_df = transactions_df[TRANSACTION_COLUMNS]
+    # One timestamp dtype (and so one CSV format) regardless of which injector produced the row.
+    accounts_df["created_at"] = pd.to_datetime(accounts_df["created_at"])
+    transactions_df["created_at"] = pd.to_datetime(transactions_df["created_at"])
+    _check_no_transaction_before_account(accounts_df, transactions_df)
 
     return accounts_df, transactions_df
+
+
+def _check_no_transaction_before_account(accounts_df: pd.DataFrame, transactions_df: pd.DataFrame) -> None:
+    """Every account must exist before it sends or receives -- the old generator
+    broke this for ~1,800 rows, producing negative account ages."""
+    created = pd.to_datetime(accounts_df.set_index("upi_id")["created_at"])
+    ts = pd.to_datetime(transactions_df["created_at"])
+    for side in ("sender_upi_id", "receiver_upi_id"):
+        bad = ts < transactions_df[side].map(created)
+        if bad.any():
+            raise AssertionError(f"{int(bad.sum())} transactions predate their {side.split('_')[0]}'s account")
 
 
 def _print_summary(accounts_df: pd.DataFrame, transactions_df: pd.DataFrame) -> None:
