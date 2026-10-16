@@ -12,6 +12,12 @@ one score and a proportionate intervention.
 | `GET /graph` | Live money-movement graph for the network view |
 | `POST /cases/{id}/confirm-fraud` | Investigator confirmation; the only way a receiver becomes "known fraud" for future scoring |
 
+Configuration comes from environment variables (`backend/app/config.py`):
+`DATABASE_URL`, `CORS_ORIGINS` (comma-separated) and
+`REBUILD_GRAPH_ON_STARTUP` (default on). At startup the in-memory transaction
+graph is rebuilt from the `transactions` table, so a restart keeps every
+account's graph history.
+
 ```bash
 # from backend/
 pip install -r requirements-dev.txt

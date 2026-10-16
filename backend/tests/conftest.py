@@ -7,9 +7,15 @@ depends on a Postgres-specific feature belongs in an integration test
 against the real thing instead, not here.
 """
 
-from datetime import datetime, timezone
+import os
 
-import pytest
+# Before any app import: tests build their own graphs, and a startup rebuild
+# would otherwise read whatever DATABASE_URL points at on the dev machine.
+os.environ.setdefault("REBUILD_GRAPH_ON_STARTUP", "false")
+
+from datetime import datetime, timezone  # noqa: E402
+
+import pytest  # noqa: E402
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool

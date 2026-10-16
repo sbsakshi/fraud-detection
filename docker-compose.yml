@@ -5,16 +5,18 @@ services:
     image: postgres:16-alpine
     container_name: finsight-postgres
     restart: unless-stopped
+    # Values come from the repo-root .env (copy .env.example); the fallbacks
+    # keep `docker compose up` working out of the box for local development.
     environment:
-      POSTGRES_DB: finsight
-      POSTGRES_USER: finsight
-      POSTGRES_PASSWORD: finsight
+      POSTGRES_DB: ${POSTGRES_DB:-finsight}
+      POSTGRES_USER: ${POSTGRES_USER:-finsight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finsight}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U finsight -d finsight"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,7 +31,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://finsight:finsight@postgres:5432/finsight
+      DATABASE_URL: postgresql://${POSTGRES_USER:-finsight}:${POSTGRES_PASSWORD:-finsight}@postgres:5432/${POSTGRES_DB:-finsight}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       PYTHONUNBUFFERED: "1"
     ports:
       - "8000:8000"
@@ -40,6 +43,8 @@ services:
       context: ./frontend
     container_name: finsight-frontend
     restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     ports:
       - "5173:5173"
 

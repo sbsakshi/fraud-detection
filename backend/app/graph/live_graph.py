@@ -7,9 +7,9 @@ just rows in a table, so keeping this in memory is what makes them fast.
 The `graph_edges` table is still written on every transaction (via
 `persist_edge_writes`) so the facts survive a restart and other consumers
 (a future dashboard, an ad-hoc SQL query) can read them without needing to
-talk to this process -- rebuilding the in-memory graph from that table on
-startup, so a restart doesn't silently reset every account's history, is a
-known gap this phase doesn't close (see backend/README.md).
+talk to this process. At startup, `rebuild_transaction_graph` replays the
+persisted transactions through the same `add_transaction` path, so a restart
+doesn't silently reset every account's graph history.
 
 `shared_device` edges are inherently symmetric (two accounts share a
 device) but `graph_edges` rows are directed (`source_account_id` ->
@@ -20,13 +20,18 @@ a query for "who does account X share a device with" needs to check both
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from datetime import timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, aliased
 
 from app.accounts import get_account_by_upi
 from app.graph.builder import TransactionGraph
-from app.graph.schemas import EdgeWrite
+from app.graph.schemas import EdgeWrite, GraphTransaction
+from app.models.account import Account
 from app.models.enums import GraphEdgeType
 from app.models.graph_edge import GraphEdge
+from app.models.transaction import Transaction
 
 _graph: TransactionGraph | None = None
 
@@ -36,6 +41,42 @@ def get_transaction_graph() -> TransactionGraph:
     if _graph is None:
         _graph = TransactionGraph()
     return _graph
+
+
+def rebuild_transaction_graph(db: Session) -> int:
+    """Replace the in-memory graph with one rebuilt from every persisted transaction.
+
+    Replays the `transactions` table in time order through
+    `TransactionGraph.add_transaction` -- the same deterministic path live
+    scoring uses -- rather than loading `graph_edges`, so the rebuilt graph
+    carries the per-edge amounts/timestamps and pair counts the analysis
+    queries need. The edge writes it returns are discarded: those rows are
+    already in `graph_edges`. Returns the number of transactions replayed.
+    """
+    global _graph
+    sender = aliased(Account)
+    receiver = aliased(Account)
+    rows = db.execute(
+        select(Transaction.id, sender.upi_id, receiver.upi_id, Transaction.amount, Transaction.device_id, Transaction.created_at)
+        .join(sender, Transaction.sender_account_id == sender.id)
+        .join(receiver, Transaction.receiver_account_id == receiver.id)
+        .order_by(Transaction.created_at, Transaction.id)
+    ).all()
+
+    graph = TransactionGraph()
+    for txn_id, sender_upi, receiver_upi, amount, device_id, created_at in rows:
+        graph.add_transaction(
+            GraphTransaction(
+                txn_ref=f"txn:{txn_id}",
+                sender_upi_id=sender_upi,
+                receiver_upi_id=receiver_upi,
+                amount=amount,
+                device_id=device_id,
+                created_at=created_at if created_at.tzinfo is not None else created_at.replace(tzinfo=timezone.utc),
+            )
+        )
+    _graph = graph
+    return len(rows)
 
 
 def reset_transaction_graph() -> None:

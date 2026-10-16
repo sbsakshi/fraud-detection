@@ -7,10 +7,11 @@ from fastapi.responses import JSONResponse
 
 from . import models  # noqa: F401  (registers ORM mappers at startup)
 from .config import settings
-from .db import check_db_connection
+from .db import SessionLocal, check_db_connection
+from .graph.live_graph import rebuild_transaction_graph
 from .ml import get_models
 from .ml.model_loader import ModelsNotTrainedError
-from .routers import accounts, cases, graph, transactions
+from .routers import accounts, cases, graph, stats, transactions
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,14 @@ async def lifespan(app: FastAPI):
         logger.info("ML models loaded from ml/models/")
     except ModelsNotTrainedError as exc:
         logger.warning("ML models not loaded: %s", exc)
+
+    if settings.rebuild_graph_on_startup:
+        try:
+            with SessionLocal() as db:
+                count = rebuild_transaction_graph(db)
+            logger.info("Rebuilt in-memory transaction graph from %d persisted transactions", count)
+        except Exception as exc:  # DB down or not migrated yet: serve /health, which reports it
+            logger.warning("Could not rebuild transaction graph at startup: %s", exc)
     yield
 
 
@@ -32,15 +41,17 @@ app = FastAPI(title="Finsight Fraud Intelligence", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=settings.cors_origin_list,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Total-Count"],  # list endpoints report the unpaged match count here
 )
 
 app.include_router(accounts.router)
 app.include_router(transactions.router)
 app.include_router(graph.router)
 app.include_router(cases.router)
+app.include_router(stats.router)
 
 
 @app.exception_handler(ModelsNotTrainedError)
