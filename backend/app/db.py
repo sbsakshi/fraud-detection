@@ -4,7 +4,11 @@ from .config import settings
 
 SQLALCHEMY_DATABASE_URL = settings.database_url
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL, future=True)
+# SQLite is the zero-install local-dev backend (see scripts/dev.sh); Postgres
+# remains the target for docker compose. FastAPI runs sync endpoints on a
+# threadpool, and SQLite's default refuses cross-thread connection reuse.
+_connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(SQLALCHEMY_DATABASE_URL, future=True, connect_args=_connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 *.db
+*.db-journal
 .pytest_cache/
 .ipynb_checkpoints/
 

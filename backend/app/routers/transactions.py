@@ -11,14 +11,17 @@ FK), so these join by hand with plain `IN` lookups keyed off the page of
 transaction/risk-score ids already fetched, rather than per-row queries.
 """
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import exists, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.accounts import get_account_or_404
 from app.db import get_db
+from app.models.account import Account
 from app.models.case import Case
-from app.models.enums import CaseStatus, InterventionLevel
+from app.models.enums import CaseStatus, InterventionLevel, ReasonCodeSource
 from app.models.reason_code import ReasonCode
 from app.models.risk_score import RiskScore
 from app.models.transaction import Transaction
@@ -36,6 +39,12 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 # Cases severe enough to count as "active" for the stats tile -- CLOSED cases
 # are done, so they don't belong in a count meant to show current workload.
+def _as_utc(value: datetime) -> datetime:
+    # Query-string timestamps without an offset parse as naive; every stored
+    # timestamp is aware UTC, and mixing the two raises on comparison.
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 ACTIVE_CASE_STATUSES = (CaseStatus.OPEN, CaseStatus.INVESTIGATING, CaseStatus.ESCALATED)
 
 
@@ -71,19 +80,12 @@ def score_transaction_endpoint(payload: TransactionCreate, db: Session = Depends
     )
 
 
-@router.get("", response_model=list[TransactionScoreOut])
-def list_transactions_endpoint(
-    limit: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db),
-) -> list[TransactionScoreOut]:
-    rows = (
-        db.query(Transaction, RiskScore)
-        .join(RiskScore, RiskScore.transaction_id == Transaction.id)
-        .options(joinedload(Transaction.sender), joinedload(Transaction.receiver))
-        .order_by(Transaction.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+def build_transaction_scores(db: Session, rows: list[tuple[Transaction, RiskScore]]) -> list[TransactionScoreOut]:
+    """Assemble wire-format results for already-fetched (transaction, risk score) pairs.
+
+    Shared with the cases router so a case's transaction renders identically to
+    the same transaction in the feed.
+    """
     if not rows:
         return []
 
@@ -108,11 +110,74 @@ def list_transactions_endpoint(
             currency=transaction.currency,
             created_at=transaction.created_at,
             risk_score=RiskScoreOut.model_validate(risk_score),
-            reason_codes=[ReasonCodeOut.model_validate(rc) for rc in reason_codes_by_risk_score.get(risk_score.id, [])],
+            reason_codes=sorted(
+                (ReasonCodeOut.model_validate(rc) for rc in reason_codes_by_risk_score.get(risk_score.id, [])),
+                key=lambda rc: rc.contribution or 0.0,
+                reverse=True,
+            ),
             case=CaseOut.model_validate(case_by_transaction[transaction.id]) if transaction.id in case_by_transaction else None,
         )
         for transaction, risk_score in rows
     ]
+
+
+def _scored_query(db: Session):
+    return (
+        db.query(Transaction, RiskScore)
+        .join(RiskScore, RiskScore.transaction_id == Transaction.id)
+        .options(joinedload(Transaction.sender), joinedload(Transaction.receiver))
+    )
+
+
+@router.get("", response_model=list[TransactionScoreOut])
+def list_transactions_endpoint(
+    response: Response,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    level: list[InterventionLevel] | None = Query(None, description="repeat to match several levels"),
+    min_score: float | None = Query(None, ge=0, le=1),
+    max_score: float | None = Query(None, ge=0, le=1),
+    source: ReasonCodeSource | None = Query(None, description="only transactions with a reason code from this source"),
+    since: datetime | None = None,
+    until: datetime | None = None,
+    q: str | None = Query(None, min_length=1, description="substring of sender or receiver UPI id"),
+    account: str | None = Query(None, description="exact UPI id, as sender or receiver"),
+    has_case: bool | None = None,
+    db: Session = Depends(get_db),
+) -> list[TransactionScoreOut]:
+    """Most recently created first. `X-Total-Count` carries the unpaged match count."""
+    query = _scored_query(db)
+    if level:
+        query = query.filter(RiskScore.intervention_level.in_(level))
+    if min_score is not None:
+        query = query.filter(RiskScore.fused_score >= min_score)
+    if max_score is not None:
+        query = query.filter(RiskScore.fused_score <= max_score)
+    if source is not None:
+        query = query.filter(
+            exists().where(ReasonCode.risk_score_id == RiskScore.id, ReasonCode.source == source)
+        )
+    if since is not None:
+        query = query.filter(Transaction.created_at >= _as_utc(since))
+    if until is not None:
+        query = query.filter(Transaction.created_at <= _as_utc(until))
+    if q:
+        like = f"%{q.lower()}%"
+        query = query.filter(
+            or_(
+                Transaction.sender.has(func.lower(Account.upi_id).like(like)),
+                Transaction.receiver.has(func.lower(Account.upi_id).like(like)),
+            )
+        )
+    if account:
+        query = query.filter(or_(Transaction.sender.has(Account.upi_id == account), Transaction.receiver.has(Account.upi_id == account)))
+    if has_case is not None:
+        case_exists = exists().where(Case.transaction_id == Transaction.id)
+        query = query.filter(case_exists if has_case else ~case_exists)
+
+    response.headers["X-Total-Count"] = str(query.with_entities(func.count(Transaction.id)).scalar() or 0)
+    rows = query.order_by(Transaction.created_at.desc(), Transaction.id.desc()).offset(offset).limit(limit).all()
+    return build_transaction_scores(db, rows)
 
 
 @router.get("/stats", response_model=TransactionStatsOut)
@@ -133,3 +198,11 @@ def transaction_stats_endpoint(db: Session = Depends(get_db)) -> TransactionStat
         active_cases=active_cases,
         avg_fused_score=float(avg_fused_score),
     )
+
+
+@router.get("/{transaction_id}", response_model=TransactionScoreOut)
+def get_transaction_endpoint(transaction_id: int, db: Session = Depends(get_db)) -> TransactionScoreOut:
+    row = _scored_query(db).filter(Transaction.id == transaction_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No scored transaction with id={transaction_id}.")
+    return build_transaction_scores(db, [row])[0]

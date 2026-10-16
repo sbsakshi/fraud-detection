@@ -8,6 +8,7 @@ itself -- they come from the resolved `Account` rows).
 
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 from decimal import Decimal
 
@@ -126,6 +127,10 @@ class GraphNodeOut(BaseModel):
     # just a stable grouping so the frontend can render mule rings etc. as
     # visually distinct clusters.
     community: int
+    # Observable signals only -- unlike `true_label` (synthetic ground truth an
+    # analyst would never have), these come from scoring and investigator action.
+    max_score: float | None = None  # highest fused score on any transaction touching this account
+    known_fraud: bool = False  # receiver of a case an investigator confirmed as fraud
 
 
 class GraphEdgeOut(BaseModel):
@@ -138,3 +143,98 @@ class GraphEdgeOut(BaseModel):
 class GraphOut(BaseModel):
     nodes: list[GraphNodeOut]
     edges: list[GraphEdgeOut]
+
+
+# --- Case workflow ----------------------------------------------------------
+
+
+class CaseResolution(str, enum.Enum):
+    """Why an investigator closed a case. Recorded on the closing event."""
+
+    FRAUD_CONFIRMED = "fraud_confirmed"
+    FALSE_POSITIVE = "false_positive"
+    CUSTOMER_VERIFIED = "customer_verified"
+
+
+class CaseEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    event_type: str
+    description: str | None
+    actor: str
+    created_at: datetime
+
+
+class CaseListItemOut(BaseModel):
+    id: int
+    status: CaseStatus
+    severity: CaseSeverity
+    assigned_to: str | None
+    created_at: datetime
+    updated_at: datetime
+    transaction_id: int
+    sender_upi_id: str
+    receiver_upi_id: str
+    amount: Decimal
+    currency: str
+    fused_score: float
+    intervention_level: InterventionLevel
+    top_reason: str | None  # rendered later by the client from code/template; here just the code
+
+
+class CaseDetailOut(BaseModel):
+    id: int
+    status: CaseStatus
+    severity: CaseSeverity
+    assigned_to: str | None
+    summary: str | None
+    created_at: datetime
+    updated_at: datetime
+    transaction: TransactionScoreOut
+    events: list[CaseEventOut]
+
+
+class CaseUpdate(BaseModel):
+    """Assign and/or move a case. Closing goes through POST /cases/{id}/close, which needs a resolution."""
+
+    actor: str = Field(min_length=1, max_length=128)
+    status: CaseStatus | None = None
+    assigned_to: str | None = Field(default=None, max_length=128)
+    unassign: bool = False
+    note: str | None = None
+
+
+class CaseNoteCreate(BaseModel):
+    actor: str = Field(min_length=1, max_length=128)
+    note: str = Field(min_length=1)
+
+
+class CaseClose(BaseModel):
+    actor: str = Field(min_length=1, max_length=128)
+    resolution: CaseResolution
+    note: str | None = None
+
+
+# --- Account profile ----------------------------------------------------------
+
+
+class AccountProfileOut(BaseModel):
+    upi_id: str
+    owner_name: str
+    bank_name: str
+    ifsc_code: str
+    account_type: AccountType
+    device_id: str | None
+    is_active: bool
+    created_at: datetime
+    known_fraud: bool
+    transactions_sent: int
+    transactions_received: int
+    total_sent: Decimal
+    total_received: Decimal
+    counterparties: int
+    max_score: float | None
+    flagged_count: int  # transactions above `inform` that involve this account
+    open_cases: int
+    shared_device_accounts: list[str]  # other accounts seen on the same device_id
