@@ -16,6 +16,7 @@ dist/
 # trained model artifacts under ml/models/ are committed since they take
 # real training time and the demo needs them without a rerun.
 ml/data/features.csv
+ml/data/rule_graph_scores.csv
 
 # Env
 .env

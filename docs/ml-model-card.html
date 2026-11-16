@@ -1,0 +1,343 @@
+<title>UPI Fraud Model Card</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a single model-card column, summary first, detail in labelled sections; wide tables scroll inside their own box */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --fg: #16202c;
+  --muted: #5a6676;
+  --line: #dde2e8;
+  --accent: #2b55c7;
+  --accent-soft: #e4ebfa;
+  --good: #1f8a5b;
+  --warn: #b7791f;
+  --bad: #c2413b;
+  --track: #e9edf2;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141b; --surface: #161d27; --fg: #e6ebf2; --muted: #93a0b2; --line: #273241;
+    --accent: #7d9cf0; --accent-soft: #1d2a45; --good: #4cc38a; --warn: #e0a44a; --bad: #ef7b72; --track: #222c3a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141b; --surface: #161d27; --fg: #e6ebf2; --muted: #93a0b2; --line: #273241;
+  --accent: #7d9cf0; --accent-soft: #1d2a45; --good: #4cc38a; --warn: #e0a44a; --bad: #ef7b72; --track: #222c3a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+.page { max-width: 960px; margin: 0 auto; display: grid; gap: 44px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 22px; font-weight: 600; }
+h3 { font-size: 16px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.mono { font-family: var(--f-mono); font-size: 0.86em; }
+.eyebrow { font: 500 12px/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.muted { color: var(--muted); }
+section { display: grid; gap: 18px; }
+.section-head { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 22px; }
+
+/* Header */
+header { display: grid; gap: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; font: 13px var(--f-mono); color: var(--muted); }
+.meta b { color: var(--fg); font-weight: 500; }
+.lede { font-size: 17px; }
+
+/* Stat tiles */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 4px; }
+.stat .v { font: 600 28px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+.stat .t { font: 12px var(--f-mono); color: var(--good); }
+.stat .l { font-size: 13px; color: var(--muted); }
+
+/* Pipeline strip */
+.flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.node { flex: 1 1 150px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; }
+.node .k { font: 500 11px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.node p { font-size: 13px; color: var(--muted); }
+
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.two > div { min-width: 0; display: grid; gap: 10px; align-content: start; }
+ul, ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+li { max-width: 68ch; }
+
+/* Tables */
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+th { font: 500 11px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+td.num, th.num { text-align: right; white-space: nowrap; }
+.tgt { color: var(--good); font-weight: 600; }
+.group td { font: 500 11px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+
+/* Now-vs-target bars */
+.bar { position: relative; height: 8px; min-width: 120px; background: var(--track); border-radius: 4px; }
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--accent); }
+.bar.fp i { background: var(--warn); }
+.bar b { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--good); border-radius: 1px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 8px; border-radius: 3px; display: inline-block; }
+
+/* Ladder chips */
+.chip { display: inline-block; font: 500 12px var(--f-mono); padding: 2px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.chip.hot { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+
+/* Roadmap */
+.plan { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.item { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.item .fx { font: 12px var(--f-mono); color: var(--good); }
+.item p { font-size: 14px; color: var(--muted); }
+
+.formula { font-family: var(--f-mono); font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; white-space: pre; }
+
+@media (max-width: 720px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .two, .plan { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+
+<div class="page">
+
+  <header>
+    <span class="eyebrow">Model card · UPI transaction risk</span>
+    <h1>UPI Fraud Model Card</h1>
+    <p class="lede">A calibrated XGBoost classifier that scores every UPI payment for fraud risk, alongside an Isolation Forest anomaly detector. Its probability feeds a three-engine fusion (rules, ML, graph) and a six-level intervention ladder.</p>
+    <div class="meta">
+      <span>trained <b>2026-10-16</b></span>
+      <span>xgboost <b>3.4.1</b></span>
+      <span>scikit-learn <b>1.9.1</b></span>
+      <span>features <b>44</b></span>
+      <span>test window <b>2026-09-04 → 09-14</b></span>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><span class="l">ROC-AUC</span><span class="v">0.995</span><span class="t">target ≥ 0.995</span></div>
+    <div class="stat"><span class="l">PR-AUC</span><span class="v">0.969</span><span class="t">target ≥ 0.975</span></div>
+    <div class="stat"><span class="l">Recall / precision at alert</span><span class="v">95 / 84%</span><span class="t">target ≥ 96 / 90%</span></div>
+    <div class="stat"><span class="l">Normal-traffic FPR at alert</span><span class="v">0.4%</span><span class="t">target ≤ 0.3%</span></div>
+  </div>
+
+  <section>
+    <div class="section-head">
+      <span class="eyebrow">How a payment is scored</span>
+      <h2>Pipeline</h2>
+    </div>
+    <div class="flow">
+      <div class="node"><span class="k">Data</span><h3>Simulated UPI traffic</h3><p>6,892 accounts, 75,001 payments, 7.0% fraud across 5 patterns.</p></div>
+      <div class="node"><span class="k">Features</span><h3>44 point-in-time features</h3><p>Built only from history before each payment. Same code in training and serving.</p></div>
+      <div class="node"><span class="k">Model</span><h3>XGBoost + isotonic</h3><p>Calibrated fraud probability, explained with per-payment SHAP.</p></div>
+      <div class="node"><span class="k">Fusion</span><h3>0.2 rule · 0.6 ML · 0.2 graph</h3><p>Fused score plus confidence from engine coverage and agreement.</p></div>
+      <div class="node"><span class="k">Action</span><h3>Intervention ladder</h3><p>inform → warn → verify → hold → restrict → escalate.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="eyebrow">Inputs</span>
+      <h2>Data and features</h2>
+    </div>
+    <div class="two">
+      <div>
+        <h3>Dataset</h3>
+        <ul>
+          <li>Normal traffic: log-normal amounts, Pareto-weighted activity, realistic hour-of-day curve.</li>
+          <li>Fraud patterns: <span class="mono">scam_recipient</span>, <span class="mono">mule_network</span>, <span class="mono">layering_chain</span>, <span class="mono">account_takeover</span>, <span class="mono">gambling_network</span>.</li>
+          <li>Hard negatives: <span class="mono">large_new_payee</span>, <span class="mono">group_collection</span>, <span class="mono">innocent_bystander</span>.</li>
+          <li>30-day burn-in, 6% of normal accounts opened mid-window, 30–50% of fraud accounts aged or recruited, so account age alone can't give away the label.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Feature tiers</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Tier</th><th class="num">Count</th><th>Examples</th></tr></thead>
+            <tbody>
+              <tr><td>Base</td><td class="num">5</td><td>amount, log amount, hour, weekday, P2P flag</td></tr>
+              <tr><td>Behavioral</td><td class="num">32</td><td>account age, amount z-score, 1h/24h velocity, new payee, fan-in/out, device sharing</td></tr>
+              <tr><td>Graph</td><td class="num">7</td><td>3h fan-in, fresh-collector flag, pair frequency, inflow swept onward</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted" style="font-size:13px">Missing history is NaN rather than a sentinel value. XGBoost handles it natively; the Isolation Forest uses median imputation plus missing-indicator columns.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="eyebrow">Method</span>
+      <h2>Training</h2>
+    </div>
+    <ol>
+      <li>Drop the burn-in, then split chronologically 60 / 20 / 20: train 32,845, validation 10,948, test 10,949 rows.</li>
+      <li>Grid search XGBoost over depth {3, 4, 6}, learning rate {0.05, 0.1}, min child weight {1, 5}, with early stopping on validation PR-AUC. No class reweighting, so probabilities stay honest.</li>
+      <li>Fit isotonic calibration on validation, so a score of 0.7 means about 70% of such payments are fraud.</li>
+      <li>Set the alert threshold at the lowest calibrated score that keeps validation false positives at or under 1% (0.15).</li>
+      <li>Train an Isolation Forest (300 trees) on normal traffic only, reported as a percentile of normal anomaly scores.</li>
+      <li>Evaluate once on test: per-pattern recall, look-alike false positives, calibration, leave-one-scenario-out, and a feature-tier ablation.</li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="eyebrow">Performance</span>
+      <h2>Results and targets by pattern</h2>
+      <p class="muted">Flag rate at the 0.15 alert threshold on the test split. Recall for fraud patterns, false-positive rate for legitimate ones.</p>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--accent)"></i>Recall now</span>
+      <span><i class="sw" style="background:var(--warn)"></i>False-positive rate now</span>
+      <span><i class="sw" style="background:var(--good);width:3px;height:14px"></i>Target</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Pattern</th><th class="num">Now</th><th class="num">Target</th><th style="width:40%">Now vs target (0–100%)</th><th class="num">Unseen-pattern recall</th><th class="num">Target</th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="6">Fraud · higher is better</td></tr>
+          <tr><td>Account takeover</td><td class="num">96.8%</td><td class="num tgt">≥ 98%</td><td><div class="bar"><i style="width:96.8%"></i><b style="left:98%"></b></div></td><td class="num">84.1%</td><td class="num tgt">≥ 90%</td></tr>
+          <tr><td>Gambling network</td><td class="num">100%</td><td class="num tgt">100%</td><td><div class="bar"><i style="width:100%"></i><b style="left:99.4%"></b></div></td><td class="num">0.0%</td><td class="num tgt">≥ 60%</td></tr>
+          <tr><td>Layering chain</td><td class="num">100%</td><td class="num tgt">100%</td><td><div class="bar"><i style="width:100%"></i><b style="left:99.4%"></b></div></td><td class="num">90.8%</td><td class="num tgt">≥ 95%</td></tr>
+          <tr><td>Mule network</td><td class="num">80.1%</td><td class="num tgt">≥ 92%</td><td><div class="bar"><i style="width:80.1%"></i><b style="left:92%"></b></div></td><td class="num">70.6%</td><td class="num tgt">≥ 85%</td></tr>
+          <tr><td>Scam recipient</td><td class="num">98.6%</td><td class="num tgt">≥ 99%</td><td><div class="bar"><i style="width:98.6%"></i><b style="left:99%"></b></div></td><td class="num">86.3%</td><td class="num tgt">≥ 92%</td></tr>
+          <tr class="group"><td colspan="6">Legitimate · lower is better</td></tr>
+          <tr><td>Normal traffic</td><td class="num">0.4%</td><td class="num tgt">≤ 0.3%</td><td><div class="bar fp"><i style="width:0.4%;min-width:3px"></i><b style="left:0.3%"></b></div></td><td class="num muted">n/a</td><td class="num muted">n/a</td></tr>
+          <tr><td>Innocent bystander</td><td class="num">10.1%</td><td class="num tgt">≤ 3%</td><td><div class="bar fp"><i style="width:10.1%"></i><b style="left:3%"></b></div></td><td class="num muted">n/a</td><td class="num muted">n/a</td></tr>
+          <tr><td>Large new payee</td><td class="num">28.8%</td><td class="num tgt">≤ 10%</td><td><div class="bar fp"><i style="width:28.8%"></i><b style="left:10%"></b></div></td><td class="num muted">n/a</td><td class="num muted">n/a</td></tr>
+          <tr><td>Group collection</td><td class="num">21.9%</td><td class="num tgt">≤ 8%</td><td><div class="bar fp"><i style="width:21.9%"></i><b style="left:8%"></b></div></td><td class="num muted">n/a</td><td class="num muted">n/a</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="font-size:13px">Unseen-pattern recall: the model is retrained without that pattern, then tested on it (leave-one-scenario-out).</p>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="eyebrow">Diagnostics</span>
+      <h2>Ablation, calibration and anomaly detection</h2>
+    </div>
+    <div class="two">
+      <div>
+        <h3>What each feature tier adds</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Features</th><th class="num">ROC-AUC</th><th class="num">PR-AUC</th><th class="num">Brier</th></tr></thead>
+            <tbody>
+              <tr><td>Base only</td><td class="num">0.936</td><td class="num">0.717</td><td class="num muted">n/a</td></tr>
+              <tr><td>+ Behavioral</td><td class="num">0.997</td><td class="num">0.973</td><td class="num">0.0078</td></tr>
+              <tr><td>+ Graph (shipped)</td><td class="num">0.995</td><td class="num">0.969</td><td class="num">0.0071</td></tr>
+              <tr><td>Target</td><td class="num tgt">≥ 0.997</td><td class="num tgt">≥ 0.975</td><td class="num tgt">≤ 0.006</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted" style="font-size:13px">Graph features improve calibration: the mean gap between predicted and observed fraud rate in the 0.1–0.9 range falls from 0.099 to 0.036.</p>
+      </div>
+      <div>
+        <h3>Calibration and anomaly scores</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Check</th><th class="num">Now</th><th class="num">Target</th></tr></thead>
+            <tbody>
+              <tr><td>Fraud rate, score 0.9–1.0</td><td class="num">100%</td><td class="num tgt">≥ 98%</td></tr>
+              <tr><td>Fraud rate, score 0.7–0.9</td><td class="num">87%</td><td class="num tgt">75–90%</td></tr>
+              <tr><td>Fraud rate, score 0.55–0.70</td><td class="num">51%</td><td class="num tgt">58–65%</td></tr>
+              <tr><td>Isolation Forest ROC-AUC (no labels)</td><td class="num">0.890</td><td class="num tgt">≥ 0.92</td></tr>
+              <tr><td>Takeovers above 99th pct anomaly</td><td class="num">40%</td><td class="num tgt">≥ 55%</td></tr>
+              <tr><td>Normal above 99th pct anomaly</td><td class="num">4.8%</td><td class="num tgt">≤ 2%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="eyebrow">Decisions</span>
+      <h2>Fusion and intervention ladder</h2>
+      <p class="muted">Thresholds are set from false-positive targets on legitimate traffic and tuned together with the fusion weights on validation.</p>
+    </div>
+    <div class="formula">fused_score = 0.2 × rule + 0.6 × ml + 0.2 × graph
+confidence  = 0.5 × coverage + 0.5 × agreement</div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Level</th><th class="num">Min score</th><th class="num">Min confidence</th><th class="num">FPR budget</th><th class="num">Recall now</th><th class="num">Legit FPR now</th><th class="num">Recall target</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip hot">escalate</span></td><td class="num">0.66</td><td class="num">0.60</td><td class="num">0.05%</td><td class="num">30.1%</td><td class="num">0.06%</td><td class="num tgt">≥ 45%</td></tr>
+          <tr><td><span class="chip hot">restrict+</span></td><td class="num">0.60</td><td class="num">0.50</td><td class="num">0.1%</td><td class="num">55.6%</td><td class="num">0.07%</td><td class="num tgt">≥ 70%</td></tr>
+          <tr><td><span class="chip">hold+</span></td><td class="num">0.43</td><td class="num">0.40</td><td class="num">0.3%</td><td class="num">89.0%</td><td class="num">0.22%</td><td class="num tgt">≥ 92%</td></tr>
+          <tr><td><span class="chip">verify+</span></td><td class="num">0.22</td><td class="num">n/a</td><td class="num">1%</td><td class="num">93.2%</td><td class="num">1.09%</td><td class="num tgt">≥ 95% at ≤ 1.0%</td></tr>
+          <tr><td><span class="chip">warn</span></td><td class="num">0.16</td><td class="num">n/a</td><td class="num">5%</td><td class="num muted">n/a</td><td class="num muted">n/a</td><td class="num muted">n/a</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="font-size:13px">Fused PR-AUC on test: 0.949 (target ≥ 0.96). Restrict and escalate open an investigator case.</p>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="eyebrow">Next iteration</span>
+      <h2>What gets us to the targets</h2>
+    </div>
+    <div class="plan">
+      <div class="item">
+        <h3>Look-alike-aware features</h3>
+        <p>Add signals that separate real group collections and large first payments from scams: sender-circle overlap with the payee, round-amount clustering, repeat payments inside a known group, payee tenure as a merchant.</p>
+        <span class="fx">large new payee ≤ 10% · group collection ≤ 8%</span>
+      </div>
+      <div class="item">
+        <h3>Hard-negative training</h3>
+        <p>Oversample the legitimate look-alikes in training and track their false-positive rate as a first-class validation metric next to PR-AUC.</p>
+        <span class="fx">precision at alert ≥ 90%</span>
+      </div>
+      <div class="item">
+        <h3>Two-hop graph features for mules</h3>
+        <p>Move beyond one-hop counts: 2-hop fan-in, shared-device clusters, time-to-forward along a chain, and node embeddings from the payment graph.</p>
+        <span class="fx">mule recall ≥ 92% · unseen ≥ 85%</span>
+      </div>
+      <div class="item">
+        <h3>Receiver-level gambling profile</h3>
+        <p>Aggregate at the operator: inflow-only behaviour, short lifespan, many small round bets, payout bursts. Individual bets look ordinary; the operator doesn't.</p>
+        <span class="fx">unseen gambling recall ≥ 60%</span>
+      </div>
+      <div class="item">
+        <h3>Exposure decay for bystanders</h3>
+        <p>A single ordinary payment to a later-flagged account should fade quickly. Weight exposure by amount, recency and repeat contact.</p>
+        <span class="fx">bystander FPR ≤ 3%</span>
+      </div>
+      <div class="item">
+        <h3>Rolling-window validation and recalibration</h3>
+        <p>Replace the single split with rolling-origin folds, and refit the calibrator on the most recent window so it tracks the live fraud rate.</p>
+        <span class="fx">mid-bucket calibration 58–65% · Brier ≤ 0.006</span>
+      </div>
+      <div class="item">
+        <h3>Investigator feedback loop</h3>
+        <p>Feed confirmed cases back as labels, so the known-fraud rule and graph exposure can be weighted from data instead of a fixed floor.</p>
+        <span class="fx">fused PR-AUC ≥ 0.96 · escalate recall ≥ 45%</span>
+      </div>
+      <div class="item">
+        <h3>Drift monitoring and threshold intervals</h3>
+        <p>Track feature PSI and score distribution weekly, and bootstrap confidence intervals for the top ladder thresholds, which rest on few legitimate rows.</p>
+        <span class="fx">verify FPR held ≤ 1.0%</span>
+      </div>
+    </div>
+  </section>
+
+</div>

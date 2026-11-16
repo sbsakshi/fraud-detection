@@ -114,6 +114,11 @@ def get_models() -> MLModels:
     return _models
 
 
+def model_version(models: MLModels | None = None) -> str:
+    """Identifies the loaded artifacts: when `python -m ml.train` produced them."""
+    return (models or get_models()).metadata.get("trained_at", "unknown")
+
+
 def _row(features: dict[str, float], models: MLModels) -> np.ndarray:
     missing = [c for c in models.feature_columns if c not in features]
     if missing:

@@ -33,6 +33,38 @@ jobs:
       - run: python -m pytest -q tests
         working-directory: backend
 
+  # The unit suite runs on SQLite. This job applies the Alembic migrations to a real
+  # Postgres, fails if the models have drifted from them (`alembic check`), and
+  # exercises the Postgres-dialect queries end to end.
+  backend-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: finsight
+          POSTGRES_PASSWORD: finsight
+          POSTGRES_DB: finsight_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finsight -d finsight_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_TEST_URL: postgresql://finsight:finsight@localhost:5432/finsight_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r backend/requirements-dev.txt
+      - run: python -m pytest -q -m postgres tests/test_postgres_integration.py
+        working-directory: backend
+
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -46,3 +78,23 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+
+  # Validates the Dockerfiles and compose files, which are otherwise only exercised by hand.
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f docker-compose.yml config -q
+      - run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
+      - run: docker build -f backend/Dockerfile -t finsight-backend .
+      - name: Backend image loads the ML artifacts (catches missing system libraries)
+        run: >
+          docker run --rm finsight-backend python -c
+          "from app.ml import get_models; get_models(); print('models loaded')"
+      - run: docker build --target prod -t finsight-frontend frontend
+      - name: Frontend image serves the app shell for client-side routes
+        run: |
+          docker run -d --name fe -p 8080:80 finsight-frontend
+          sleep 3
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'
+          curl -fsS http://127.0.0.1:8080/cases/1 | grep -q '<div id="root">'

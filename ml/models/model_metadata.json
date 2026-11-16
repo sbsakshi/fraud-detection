@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-10-16T02:52:13+00:00",
+  "trained_at": "2026-10-16T06:27:18+00:00",
   "data_sha256": {
     "accounts.csv": "04029826ab85f1001bab71cbeab5aa58da51de9624d01f6660aa21cc5eb367f6",
     "transactions.csv": "48538a86c8c9d550e6932e2b0afae8a27f325a08c1962277d89c74dabd7e5bec"
@@ -48,13 +48,20 @@
     "sender_minutes_since_first_seen",
     "receiver_minutes_since_first_seen",
     "sender_is_merchant",
-    "receiver_is_merchant"
+    "receiver_is_merchant",
+    "sender_fan_in_3h",
+    "sender_fan_in_is_fresh_burst",
+    "receiver_fan_in_3h",
+    "receiver_fan_in_is_fresh_burst",
+    "receiver_fan_out_3h",
+    "pair_txn_count_24h",
+    "amount_to_sender_inflow_3h_ratio"
   ],
   "xgboost_params": {
     "max_depth": 3,
-    "learning_rate": 0.1,
+    "learning_rate": 0.05,
     "min_child_weight": 1,
-    "n_estimators": 193
+    "n_estimators": 468
   },
   "split": {
     "burn_in_before": "2026-07-16",
@@ -66,7 +73,7 @@
       "test": 10949
     }
   },
-  "alert_threshold": 0.1,
+  "alert_threshold": 0.1515,
   "target_fpr": 0.01,
   "anomaly_reason_percentile": 0.99
 }

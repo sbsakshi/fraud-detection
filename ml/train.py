@@ -48,7 +48,13 @@ from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_s
 from sklearn.pipeline import make_pipeline
 from xgboost import XGBClassifier
 
-from ml.features.engineering import BASE_FEATURES, BEHAVIORAL_FEATURES, FEATURE_COLUMNS, NULLABLE_FEATURES
+from ml.features.engineering import (
+    BASE_FEATURES,
+    BEHAVIORAL_FEATURES,
+    FEATURE_COLUMNS,
+    GRAPH_FEATURES,
+    NULLABLE_FEATURES,
+)
 from ml.synthetic.config import START_DATE
 
 ML_DIR = Path(__file__).resolve().parent
@@ -218,13 +224,16 @@ def main() -> None:
         "flag_rate_above_reason_percentile": flag_rates(test, test_anomaly >= ANOMALY_REASON_PERCENTILE),
     }
 
-    # --- Ablation: base features only ---
-    base_model, _, _ = search_xgb(train, val, BASE_FEATURES)
-    base_scores = base_model.predict_proba(test[BASE_FEATURES])[:, 1]
+    # --- Ablation: what each feature tier adds ---
+    def tier_metrics(cols: list[str]) -> dict:
+        m, _, _ = search_xgb(train, val, cols)
+        s = m.predict_proba(test[cols])[:, 1]
+        return {"roc_auc": round(roc_auc_score(y_test, s), 4), "pr_auc": round(average_precision_score(y_test, s), 4)}
+
     metrics["ablation"] = {
-        "base_only": {"roc_auc": round(roc_auc_score(y_test, base_scores), 4),
-                      "pr_auc": round(average_precision_score(y_test, base_scores), 4)},
-        "base_plus_behavioral": {"roc_auc": metrics["roc_auc"], "pr_auc": metrics["pr_auc"]},
+        "base_only": tier_metrics(BASE_FEATURES),
+        "base_plus_behavioral": tier_metrics(BASE_FEATURES + BEHAVIORAL_FEATURES),
+        "base_plus_behavioral_plus_graph": {"roc_auc": metrics["roc_auc"], "pr_auc": metrics["pr_auc"]},
     }
 
     # --- Leave-one-scenario-out: can it catch a fraud pattern it never saw? ---
@@ -259,7 +268,7 @@ def main() -> None:
     joblib.dump(iso, MODELS_DIR / "isolation_forest.joblib")
     with open(MODELS_DIR / "feature_columns.json", "w") as f:
         json.dump({"base_features": BASE_FEATURES, "behavioral_features": BEHAVIORAL_FEATURES,
-                   "nullable_features": NULLABLE_FEATURES, "all_features": FEATURE_COLUMNS}, f, indent=2)
+                   "graph_features": GRAPH_FEATURES, "nullable_features": NULLABLE_FEATURES, "all_features": FEATURE_COLUMNS}, f, indent=2)
     metadata = {
         "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data_sha256": {name: _sha256(DATA_DIR / name) for name in ("accounts.csv", "transactions.csv")},

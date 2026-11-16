@@ -18,7 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from statistics import pstdev
 
-DEFAULT_WEIGHTS = {"rule": 0.25, "ml": 0.5, "graph": 0.25}
+from app.scoring.config import load_weights
+
+DEFAULT_WEIGHTS = load_weights()  # from intervention_config.json, tuned with the ladder
 
 
 @dataclass(frozen=True)

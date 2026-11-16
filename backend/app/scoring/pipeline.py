@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.graph import GraphContext, GraphTransaction, evaluate_graph
 from app.graph.live_graph import get_transaction_graph, persist_edge_writes
-from app.ml import anomaly_reason, compute_live_features, explain_ml_score, score_transaction
+from app.ml import anomaly_reason, compute_live_features, explain_ml_score, model_version, score_transaction
 from app.models.account import Account
 from app.models.case import Case
 from app.models.case_event import CaseEvent
@@ -30,6 +30,7 @@ from app.models.reason_code import ReasonCode
 from app.models.risk_score import RiskScore
 from app.models.transaction import Transaction
 from app.rules import evaluate_rules
+from app.scoring.config import config_version
 from app.scoring.context_builders import build_rule_context, get_known_fraud_upis
 from app.scoring.fusion import fuse_scores
 from app.scoring.intervention import decide_intervention
@@ -147,6 +148,8 @@ def score_and_persist_transaction(
         fused_score=fusion.fused_score,
         confidence=fusion.confidence,
         intervention_level=intervention_level,
+        model_version=model_version(),
+        ladder_version=config_version(),
     )
     db.add(risk_score)
     db.flush()  # assigns risk_score.id

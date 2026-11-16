@@ -284,3 +284,19 @@ def test_account_created_at_defaults_to_now(client: TestClient):
 def test_confirm_fraud_on_missing_case_is_404(client: TestClient):
     resp = client.post("/cases/999/confirm-fraud", json={"actor": "analyst@bank"})
     assert resp.status_code == 404
+
+
+def test_scored_transaction_records_which_model_and_ladder_produced_it(client: TestClient):
+    from app.ml import model_version
+    from app.scoring.config import config_version
+
+    create_account(client, "alice@bank", device_id="d1")
+    create_account(client, "bob@bank", device_id="d2")
+    body = score(client, "alice@bank", "bob@bank", "500.00", "d1")
+    assert body["risk_score"]["model_version"] == model_version()
+    assert body["risk_score"]["ladder_version"] == config_version()
+
+    # The same values come back when the transaction is read later.
+    stored = client.get(f"/transactions/{body['transaction_id']}").json()
+    assert stored["risk_score"]["model_version"] == model_version()
+    assert stored["risk_score"]["ladder_version"] == config_version()

@@ -75,6 +75,12 @@ test), so there's no train/serve skew.
   holding time, device reuse and sharing (sender's device and the receiver's
   devices), time since each account first appeared in the payment graph, and
   merchant flags.
+- **Graph** (7): short-window money-flow shape, the patterns the backend's graph
+  engine checks by rule, given to the model as numbers. Fan-in over the last 3h
+  for sender and receiver, whether that fan-in is the account's *entire* inbound
+  history (a fresh collector rather than an established hub), the receiver's 3h
+  fan-out, how often this sender/receiver pair paid each other in the last 24h,
+  and what share of the sender's recent inflow this payment sweeps onward.
 - Missing history is `NaN` (`NULLABLE_FEATURES`), not a `-1` sentinel that
   collided with real values. XGBoost handles NaN natively; the Isolation
   Forest gets median imputation plus missing-indicator columns.
@@ -91,7 +97,8 @@ test), so there's no train/serve skew.
    false positives at or under 1%.
 5. Isolation Forest on normal training traffic only, reported as a percentile
    of normal-traffic anomaly scores.
-6. Evaluate once on test, and run leave-one-scenario-out retraining.
+6. Evaluate once on test, and run leave-one-scenario-out retraining. The
+   ablation retrains with each feature tier (base, + behavioral, + graph).
 
 Artifacts in `ml/models/`: `xgboost.joblib`, `calibrator.joblib`,
 `isolation_forest.joblib`, `feature_columns.json`, `model_metadata.json` (data
@@ -103,47 +110,66 @@ works without retraining.
 
 | Metric | Value |
 |---|---:|
-| ROC-AUC | 0.997 |
-| PR-AUC | 0.970 |
-| Brier score | 0.008 |
-| Alert threshold (calibrated) | 0.10 |
-| Recall / precision at alert threshold | 93.9% / 85.0% |
-| Normal-traffic false-positive rate at alert threshold | 0.3% |
+| ROC-AUC | 0.995 |
+| PR-AUC | 0.969 |
+| Brier score | 0.007 |
+| Alert threshold (calibrated) | 0.15 |
+| Recall / precision at alert threshold | 95.0% / 84.0% |
+| Normal-traffic false-positive rate at alert threshold | 0.4% |
+
+The alert threshold is a reporting number for this table. The backend does not
+read it: decisions come from the intervention ladder in
+`backend/app/scoring/intervention_config.json` (see `backend/README.md`).
 
 Flag rate per label: recall for fraud, false-positive rate for the rest.
 
-| Label | at alert threshold (0.10) | at 0.5 | Leave-one-scenario-out recall |
+| Label | at alert threshold (0.15) | at 0.5 | Leave-one-scenario-out recall |
 |---|---:|---:|---:|
-| account_takeover | 95.2% | 90.5% | 84.1% |
+| account_takeover | 96.8% | 90.5% | 84.1% |
 | gambling_network | 100.0% | 100.0% | 0.0% |
-| layering_chain | 100.0% | 99.2% | 92.5% |
-| mule_network | 77.4% | 69.2% | 73.3% |
-| scam_recipient | 97.3% | 94.5% | 82.9% |
-| normal *(not fraud)* | 0.3% | 0.1% | |
-| innocent_bystander *(not fraud)* | 7.6% | 4.2% | |
-| large_new_payee *(not fraud)* | 28.8% | 9.1% | |
-| group_collection *(not fraud)* | 21.4% | 13.5% | |
+| layering_chain | 100.0% | 99.2% | 90.8% |
+| mule_network | 80.1% | 65.8% | 70.6% |
+| scam_recipient | 98.6% | 93.2% | 86.3% |
+| normal *(not fraud)* | 0.4% | 0.1% | |
+| innocent_bystander *(not fraud)* | 10.1% | 4.2% | |
+| large_new_payee *(not fraud)* | 28.8% | 7.6% | |
+| group_collection *(not fraud)* | 21.9% | 5.5% | |
 
 How to read it:
 
 - **The original 0.999+ numbers were inflated** by the generator shortcuts in
-  the table above. On the regenerated data, the same model family scores 0.997
+  the table above. On the regenerated data the same model family scores 0.995
   ROC-AUC with honest per-scenario recall, and its weak spots are visible.
 - **Look-alikes are the real cost.** A legitimate large payment to a new payee
   is flagged 28.8% of the time at the alert threshold, and a group collection
-  21.4%. These rates are what to watch as the model or features change.
+  21.9%. These are the rates to watch as the model or features change.
 - **Leave-one-scenario-out** (trained without a pattern, tested on it)
   measures generalization to fraud the model never saw. Takeover, layering and
-  scam stay at 83-93%. Gambling drops to 0%: individual bets look like
+  scam stay at 84-91%. Gambling drops to 0%: individual bets look like
   ordinary merchant payments, so it can only be learned from labelled
   examples.
-- **Calibration** is good where it matters: the 0.9-1.0 bucket is 100% fraud
-  and 0.7-0.9 is 76%. The mid buckets run high, because the test window has
-  less fraud (6.0%) than validation (9.3%), where the calibrator was fitted.
-- **Ablation:** base features alone reach 0.936 ROC / 0.717 PR-AUC; adding the
-  behavioral tier lifts that to 0.997 / 0.970.
-- **Isolation Forest:** 0.895 ROC-AUC with no labels. Above its 99th
-  percentile it flags 56% of takeovers and 49% of layering hops, versus 3.8%
+- **Ablation** (what each feature tier adds):
+
+  | Features | ROC-AUC | PR-AUC |
+  |---|---:|---:|
+  | base only | 0.936 | 0.717 |
+  | + behavioral | 0.997 | 0.973 |
+  | + graph (shipped) | 0.995 | 0.969 |
+
+  The graph tier did **not** improve discrimination: ROC and PR-AUC are within
+  split noise of (slightly below) the behavioral model, and mule recall did not
+  move (through the tuned fusion pipeline at a 0.10 weight floor, mule payments
+  flagged verify-or-higher: 76.0% without, 75.3% with). It
+  is kept because it **calibrates better**: Brier 0.0071 vs 0.0078, and the mean
+  gap between predicted probability and observed fraud rate in the 0.1-0.9
+  range drops from 0.099 to 0.036. The intervention ladder's thresholds assume
+  calibrated scores, so that is what the graph features buy.
+- **Calibration** (test): the 0.9-1.0 bucket is 100% fraud and 0.7-0.9 is 87%.
+  The mid buckets still run slightly high (0.55-0.70 is 51% fraud), because the
+  test window has less fraud (6.0%) than validation (9.3%), where the calibrator
+  was fitted.
+- **Isolation Forest:** 0.890 ROC-AUC with no labels. Above its 99th
+  percentile it flags 40% of takeovers and 44% of layering hops, versus 4.8%
   of normal traffic.
 - **Shortcut guards** (in `metrics.json`): the strongest single feature,
   receiver outflow history, reaches 0.92 ROC on its own (inverted). That's a
@@ -153,3 +179,31 @@ How to read it:
 The fraud here is still synthetic and cleaner than real traffic. Treat these
 numbers as a check that the pipeline learns the signal that's there and is
 measured honestly, not as a real-world accuracy claim.
+
+## Fusion and ladder tuning
+
+The model is one of three inputs. `backend/scripts/tune_fusion.py` replays rules
+and graph, scores the model, and tunes the fusion weights and ladder on the
+validation split, then reports on the untouched test split. Ladder thresholds
+are set from false-positive targets on legitimate traffic (warn 5%, verify 1%,
+hold 0.3%, restrict 0.1%, escalate 0.05%); weights maximize validation PR-AUC
+with a 0.20 floor per engine.
+
+| Test split | Shipped before | Tuned (now) |
+|---|---:|---:|
+| fused PR-AUC | 0.940 | 0.949 |
+| verify or higher: recall / legit FPR | 90.7% / 0.47% | 93.2% / 1.09% |
+| hold or higher | 31.5% / 0.10% | 89.0% / 0.22% |
+| restrict or higher (opens a case) | 17.4% / 0.00% | 55.6% / 0.07% |
+| escalate | 0.0% / 0.00% | 30.1% / 0.06% |
+
+Most of the gain comes from the ladder, not the weights. The old escalate bar
+(fused >= 0.90) was effectively unreachable: with ML weighted 0.5 and the graph
+engine rarely firing, fused scores top out near 0.75. Retuning the ladder alone,
+with the old weights, already lifts hold-or-higher recall from 31.5% to 88.7%.
+
+Caveats: thresholds at the top rest on a handful of legitimate rows per split
+(0.05% of ~9.9k is 5), so treat them as approximate; the verify tier's
+false-positive rate came out at 1.09% on test against its 1% target; the replay
+has no investigator-confirmed fraud, so the known-fraud rule and graph exposure
+cannot be weighed here, which is why the weight search keeps a floor on them.

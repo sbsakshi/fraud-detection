@@ -5,6 +5,9 @@ every transaction in real time, cluster mule rings, and drive a
 proportionate intervention instead of an outright freeze. Runs entirely
 against synthetic accounts and transactions.
 
+**New here?** Read the [developer guide](docs/DEVELOPER_GUIDE.md): architecture, every
+component, the ML models, cases, accuracy, design decisions and known gaps.
+
 ## Status
 
 - `backend/`: FastAPI scoring service. Rules, a calibrated XGBoost model and
@@ -18,8 +21,9 @@ against synthetic accounts and transactions.
 - `ml/`: synthetic data generator (with burn-in, legitimate look-alikes and
   no label shortcuts), feature engineering, and `python -m ml.train` for
   training, calibration and honest evaluation. See [ml/README.md](ml/README.md).
-- CI (`.github/workflows/ci.yml`) runs the ML tests, the backend tests and the
-  frontend build.
+- CI (`.github/workflows/ci.yml`) runs the ML tests, the backend tests, the
+  backend tests against a real Postgres, the frontend build, and the Docker
+  images. See [infra/README.md](infra/README.md).
 
 ## Run locally
 
@@ -29,7 +33,7 @@ docker compose up --build
 
 Then:
 
-- Backend health: http://localhost:8000/health
+- Backend health: http://localhost:8000/health/ready
 - Frontend: http://localhost:5173
 - Postgres: localhost:5432
 

@@ -73,3 +73,28 @@ def health_check() -> dict:
         ml_models_status = "not_trained"
 
     return {"status": "ok", "service": "finsight-backend", "ml_models": ml_models_status}
+
+
+@app.get("/health/live")
+def liveness() -> dict:
+    """The process is up and serving requests. Never touches the DB or the models."""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+def readiness() -> dict:
+    """Ready to score: the database answers *and* the ML artifacts are loaded.
+
+    `/health` reports a missing model as a field and still returns 200; an
+    orchestrator needs a hard failure instead, because `POST /transactions`
+    returns 503 until the models load.
+    """
+    try:
+        check_db_connection()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"database unavailable: {exc}") from exc
+    try:
+        get_models()
+    except ModelsNotTrainedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"status": "ready"}

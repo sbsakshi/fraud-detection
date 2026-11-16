@@ -7,7 +7,7 @@ account implicitly (see `app.accounts.get_account_or_404`) so a typo'd
 `upi_id` fails loudly instead of silently fabricating an account.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
@@ -18,7 +18,7 @@ from app.models.case import Case
 from app.models.enums import CaseStatus, InterventionLevel
 from app.models.risk_score import RiskScore
 from app.models.transaction import Transaction
-from app.schemas import AccountCreate, AccountOut, AccountProfileOut
+from app.schemas import AccountBrief, AccountCreate, AccountOut, AccountProfileOut
 from app.scoring.context_builders import get_known_fraud_upis
 
 _ACTIVE_CASE_STATUSES = (CaseStatus.OPEN, CaseStatus.INVESTIGATING, CaseStatus.ESCALATED)
@@ -42,6 +42,21 @@ def create_account_endpoint(payload: AccountCreate, db: Session = Depends(get_db
         created_at=payload.created_at,
     )
     return AccountOut.model_validate(account)
+
+
+@router.get("", response_model=list[AccountBrief])
+def search_accounts_endpoint(
+    q: str = Query("", max_length=64),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[AccountBrief]:
+    """Find accounts by owner name or UPI id (case-insensitive substring), e.g. for a payee picker."""
+    query = db.query(Account).filter(Account.is_active.is_(True))
+    term = q.strip()
+    if term:
+        like = f"%{term.lower()}%"
+        query = query.filter(or_(func.lower(Account.owner_name).like(like), func.lower(Account.upi_id).like(like)))
+    return [AccountBrief.model_validate(a) for a in query.order_by(Account.owner_name, Account.upi_id).limit(limit).all()]
 
 
 @router.get("/{upi_id}", response_model=AccountProfileOut)

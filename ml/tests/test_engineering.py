@@ -186,3 +186,62 @@ def test_feature_columns_have_no_overlap_and_no_nulls():
     features = build_features(txns, accounts)
     non_nullable = [c for c in BASE_FEATURES + BEHAVIORAL_FEATURES if c not in NULLABLE_FEATURES]
     assert not features[non_nullable].isna().any().any()
+
+
+def _graph_row(txns: list[dict], accounts: list[dict], index: int = -1):
+    features = build_features(pd.DataFrame([make_txn(**t) for t in txns]), make_accounts(accounts))
+    return features.iloc[index]
+
+
+_ACCOUNTS = [{"upi_id": u, "device_id": f"d-{u}", "created_at": "2026-01-01"} for u in ("a@x", "b@x", "c@x", "d@x", "e@x", "m@x", "z@x")]
+
+
+def test_collector_burst_sets_fan_in_and_fresh_burst_features():
+    # Three senders pay collector m@x within the hour, then m@x sweeps to z@x.
+    txns = [
+        {"txn_ref": f"T{i}", "sender_upi_id": s, "receiver_upi_id": "m@x", "amount": 1000.0,
+         "device_id": f"d-{s}", "created_at": f"2026-02-01 10:{i:02d}:00"}
+        for i, s in enumerate(["a@x", "b@x", "c@x"])
+    ]
+    txns.append({"txn_ref": "T3", "sender_upi_id": "m@x", "receiver_upi_id": "z@x", "amount": 2900.0,
+                 "device_id": "d-m@x", "created_at": "2026-02-01 11:00:00"})
+    sweep = _graph_row(txns, _ACCOUNTS)
+    assert sweep["sender_fan_in_3h"] == 3
+    assert sweep["sender_fan_in_is_fresh_burst"] == 1
+    assert sweep["amount_to_sender_inflow_3h_ratio"] == 2900.0 / 3000.0
+
+    # The third inbound payment sees two earlier senders plus itself.
+    third_in = _graph_row(txns, _ACCOUNTS, index=2)
+    assert third_in["receiver_fan_in_3h"] == 3
+    assert third_in["receiver_fan_in_is_fresh_burst"] == 1
+
+
+def test_established_hub_is_not_a_fresh_burst_and_old_fan_in_leaves_the_window():
+    txns = [{"txn_ref": "T0", "sender_upi_id": "a@x", "receiver_upi_id": "m@x", "amount": 50.0,
+             "device_id": "d-a@x", "created_at": "2026-02-01 01:00:00"}]
+    txns += [
+        {"txn_ref": f"T{i}", "sender_upi_id": s, "receiver_upi_id": "m@x", "amount": 50.0,
+         "device_id": f"d-{s}", "created_at": f"2026-02-01 10:{i:02d}:00"}
+        for i, s in enumerate(["b@x", "c@x"], start=1)
+    ]
+    row = _graph_row(txns, _ACCOUNTS)
+    assert row["receiver_fan_in_3h"] == 2  # a@x paid 9h earlier: outside the 3h window
+    assert row["receiver_fan_in_is_fresh_burst"] == 0  # all-time senders {a, b, c} > windowed {b, c}
+
+
+def test_pair_count_and_receiver_fan_out_use_only_prior_transactions():
+    txns = [
+        {"txn_ref": f"T{i}", "sender_upi_id": "a@x", "receiver_upi_id": "b@x", "amount": 10.0,
+         "device_id": "d-a@x", "created_at": f"2026-02-01 10:0{i}:00"}
+        for i in range(3)
+    ]
+    txns.append({"txn_ref": "T3", "sender_upi_id": "b@x", "receiver_upi_id": "c@x", "amount": 5.0,
+                 "device_id": "d-b@x", "created_at": "2026-02-01 10:30:00"})
+    txns.append({"txn_ref": "T4", "sender_upi_id": "a@x", "receiver_upi_id": "b@x", "amount": 10.0,
+                 "device_id": "d-a@x", "created_at": "2026-02-01 10:40:00"})
+    last = _graph_row(txns, _ACCOUNTS)
+    assert last["pair_txn_count_24h"] == 3  # the three earlier a->b payments, not itself
+    assert last["receiver_fan_out_3h"] == 1  # b@x has paid c@x
+    first = _graph_row(txns, _ACCOUNTS, index=0)
+    assert first["pair_txn_count_24h"] == 0
+    assert math.isnan(first["amount_to_sender_inflow_3h_ratio"])

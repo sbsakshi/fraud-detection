@@ -1,11 +1,40 @@
 {
-  "description": "Six-level intervention ladder. Walked top to bottom; the first level whose min_score and min_confidence are both met wins. min_confidence gates the more severe actions on more than a high score alone -- a high fused_score built from one uncorroborated source stays capped at a lower level until something else agrees. Tune here, not in code -- app.scoring.intervention just reads this file.",
+  "description": "Six-level intervention ladder. Walked top to bottom; the first level whose min_score and min_confidence are both met wins. min_confidence gates the more severe actions on more than a high score alone -- a high fused_score built from one uncorroborated source stays capped at a lower level until something else agrees. Tune here, not in code -- app.scoring.intervention just reads this file. fusion_weights blend the rule/ml/graph scores into fused_score. Both are tuned together by scripts/tune_fusion.py, and the file's hash is recorded on every RiskScore as ladder_version.",
   "levels": [
-    { "level": "escalate", "min_score": 0.90, "min_confidence": 0.60 },
-    { "level": "restrict", "min_score": 0.70, "min_confidence": 0.50 },
-    { "level": "hold",     "min_score": 0.55, "min_confidence": 0.40 },
-    { "level": "verify",   "min_score": 0.35, "min_confidence": 0.00 },
-    { "level": "warn",     "min_score": 0.15, "min_confidence": 0.00 },
-    { "level": "inform",   "min_score": 0.00, "min_confidence": 0.00 }
-  ]
+    {
+      "level": "escalate",
+      "min_score": 0.66,
+      "min_confidence": 0.6
+    },
+    {
+      "level": "restrict",
+      "min_score": 0.6,
+      "min_confidence": 0.5
+    },
+    {
+      "level": "hold",
+      "min_score": 0.43,
+      "min_confidence": 0.4
+    },
+    {
+      "level": "verify",
+      "min_score": 0.22,
+      "min_confidence": 0.0
+    },
+    {
+      "level": "warn",
+      "min_score": 0.16,
+      "min_confidence": 0.0
+    },
+    {
+      "level": "inform",
+      "min_score": 0.0,
+      "min_confidence": 0.0
+    }
+  ],
+  "fusion_weights": {
+    "rule": 0.2,
+    "ml": 0.6,
+    "graph": 0.2
+  }
 }

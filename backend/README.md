@@ -5,11 +5,14 @@ one score and a proportionate intervention.
 
 | Endpoint | What it does |
 |---|---|
-| `GET /health` | DB check + whether ML artifacts loaded |
+| `GET /health` | DB check + whether ML artifacts loaded (200 either way) |
+| `GET /health/live`, `GET /health/ready` | Liveness; readiness (503 until the DB answers and the ML artifacts are loaded) |
 | `POST /accounts` | Create an account (send `created_at` when replaying history -- account-age features depend on it) |
 | `POST /transactions` | Score + persist one transaction (rules, ML, graph, fusion, intervention, case) |
 | `GET /transactions`, `GET /transactions/stats` | Dashboard feed and summary tiles |
 | `GET /graph` | Live money-movement graph for the network view |
+| `GET /cases`, `GET /cases/{id}`, `PATCH`/`POST` on cases | Investigator queue and workflow; every change leaves a `CaseEvent` |
+| `GET /stats/*` | Timeseries, top reason codes, case summary, and the live ladder + fusion weights |
 | `POST /cases/{id}/confirm-fraud` | Investigator confirmation; the only way a receiver becomes "known fraud" for future scoring |
 
 Configuration comes from environment variables (`backend/app/config.py`):
@@ -24,6 +27,29 @@ pip install -r requirements-dev.txt
 python -m pytest tests/
 python scripts/replay_synthetic.py --limit 2000   # populate a running backend from ml/data/
 ```
+
+## Fusion and the intervention ladder
+
+`app/scoring/intervention_config.json` holds the ladder (`min_score`,
+`min_confidence` per level) and the fusion weights (`rule` / `ml` / `graph`,
+currently 0.2 / 0.6 / 0.2). They are tuned together:
+
+```bash
+python scripts/tune_fusion.py                       # report only
+python scripts/tune_fusion.py --min-weight 0.2 --write-config
+```
+
+The script replays rules and graph over the synthetic data, scores the ML model,
+picks weights by validation PR-AUC and each level's `min_score` from a
+legitimate-traffic false-positive target, and reports on the held-out test split
+(results in [../ml/README.md](../ml/README.md#fusion-and-ladder-tuning)).
+`app/scoring/tuning.py` holds the pure logic and is unit-tested.
+
+Every `risk_scores` row records `model_version` (the ML artifacts' training
+timestamp) and `ladder_version` (a hash of that config file), so a decision can
+be traced to what produced it. Rows scored before the columns existed have none.
+Scores in an existing database were produced by the previous model and ladder;
+re-run `scripts/replay_dataset.py` against a fresh database to regenerate them.
 
 ## Phase 3 — rule engine (done)
 

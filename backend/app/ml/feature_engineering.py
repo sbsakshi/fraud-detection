@@ -18,8 +18,8 @@ the no-peeking-at-the-future discipline `backend/app/rules` already uses:
 every feature for a transaction is computed only from account/device state
 built up by transactions strictly before it, then the state is updated.
 
-Features are split into two tiers so later phases can run the ablation
-study the project needs:
+Features are split into three tiers so the ablation study can show what each
+one adds:
 
 - `BASE_FEATURES` — raw transaction attributes only (amount, timing). A
   model trained on just these is the "ML alone" baseline.
@@ -28,7 +28,11 @@ study the project needs:
   inflow/outflow shape, device reuse). Adding these is the "ML + behavioural
   features" variant.
 
-Phase 5 graph features are a separate, later addition on top of both.
+- `GRAPH_FEATURES` — short-window money-flow shape (3h fan-in/fan-out, whether
+  a fan-in burst is an account's entire history, repeated payments between a
+  pair, how much of recent inflow this payment sweeps onward). These are the
+  patterns the backend's graph engine checks by rule, given to the model as
+  numbers so it can weigh them against everything else.
 
 `sender_is_merchant`/`receiver_is_merchant` exist because merchants
 legitimately receive from many distinct customers -- a spot-check while
@@ -66,6 +70,9 @@ from math import log1p, sqrt
 import pandas as pd
 
 ONE_HOUR = timedelta(hours=1)
+# Matches `GraphConfig.collector_window_hours` in the backend's graph engine: the
+# mule_network scenario compresses its fan-in-then-sweep cycle into ~2.5 hours.
+THREE_HOURS = timedelta(hours=3)
 TWENTY_FOUR_HOURS = timedelta(hours=24)
 NO_HISTORY = float("nan")
 # Below this many prior transactions, a sender's own "average"/"std" isn't
@@ -115,10 +122,25 @@ BEHAVIORAL_FEATURES = [
     "receiver_is_merchant",
 ]
 
-FEATURE_COLUMNS = BASE_FEATURES + BEHAVIORAL_FEATURES
+# Money-flow shape over a short window: the signals the backend's graph engine
+# looks for (mule collectors, repeated counterparties), given to the model as
+# numbers instead of a separate rule score. Same no-peeking discipline as the
+# rest: every value is computed from transactions strictly before this one.
+GRAPH_FEATURES = [
+    "sender_fan_in_3h",
+    "sender_fan_in_is_fresh_burst",
+    "receiver_fan_in_3h",
+    "receiver_fan_in_is_fresh_burst",
+    "receiver_fan_out_3h",
+    "pair_txn_count_24h",
+    "amount_to_sender_inflow_3h_ratio",
+]
+
+FEATURE_COLUMNS = BASE_FEATURES + BEHAVIORAL_FEATURES + GRAPH_FEATURES
 
 # Features that are NaN when the history they summarize doesn't exist yet.
 NULLABLE_FEATURES = [
+    "amount_to_sender_inflow_3h_ratio",
     "sender_account_age_days",
     "receiver_account_age_days",
     "amount_zscore_sender",
@@ -145,12 +167,14 @@ class _AccountState:
     sent_devices: set[str] = field(default_factory=set)
     last_sent_at: pd.Timestamp | None = None
     sent_window: deque = field(default_factory=deque)  # (ts, amount), pruned to 24h
+    sent_to_window: deque = field(default_factory=deque)  # (ts, receiver_upi_id), pruned to 24h
     # As receiver.
     received_count: int = 0
     received_sum: float = 0.0
     received_senders: set[str] = field(default_factory=set)
     last_received_at: pd.Timestamp | None = None
     received_window: deque = field(default_factory=deque)  # (ts, sender_upi_id), pruned to 24h
+    received_amount_window: deque = field(default_factory=deque)  # (ts, amount), pruned to 24h
 
 
 def _minutes_since(ts: pd.Timestamp, earlier: pd.Timestamp | None) -> float:
@@ -178,6 +202,8 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
     states: dict[str, _AccountState] = {}
     # device_id -> set of sender upi_ids seen using it, for the shared-device signal.
     device_users: dict[str, set[str]] = {}
+    # (sender, receiver) -> timestamps of their payments in the last 24h.
+    pair_window: dict[tuple[str, str], deque] = {}
 
     def state_for(upi_id: str) -> _AccountState:
         state = states.get(upi_id)
@@ -200,6 +226,13 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
 
         _prune(s.sent_window, ts - TWENTY_FOUR_HOURS)
         _prune(r.received_window, ts - TWENTY_FOUR_HOURS)
+        _prune(s.sent_to_window, ts - TWENTY_FOUR_HOURS)
+        _prune(s.received_window, ts - TWENTY_FOUR_HOURS)
+        _prune(s.received_amount_window, ts - TWENTY_FOUR_HOURS)
+        _prune(r.sent_to_window, ts - TWENTY_FOUR_HOURS)
+        pair = pair_window.setdefault((sender, receiver), deque())
+        while pair and pair[0] < ts - TWENTY_FOUR_HOURS:
+            pair.popleft()
 
         # --- base ---
         base = {
@@ -296,6 +329,23 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
             "receiver_is_merchant": int(account_is_merchant.get(receiver, False)),
         }
 
+        # --- graph: short-window money-flow shape ---
+        three_hours_ago = ts - THREE_HOURS
+        sender_fan_in_3h = len({snd for t, snd in s.received_window if t >= three_hours_ago})
+        receiver_fan_in_3h = len({snd for t, snd in r.received_window if t >= three_hours_ago} | {sender})
+        # "Fresh burst": the windowed fan-in is the account's *entire* inbound history,
+        # which separates a just-opened collector from an established, busy hub.
+        sender_inflow_3h = sum(a for t, a in s.received_amount_window if t >= three_hours_ago)
+        graph = {
+            "sender_fan_in_3h": sender_fan_in_3h,
+            "sender_fan_in_is_fresh_burst": int(sender_fan_in_3h > 0 and sender_fan_in_3h == len(s.received_senders)),
+            "receiver_fan_in_3h": receiver_fan_in_3h,
+            "receiver_fan_in_is_fresh_burst": int(receiver_fan_in_3h == len(r.received_senders | {sender})),
+            "receiver_fan_out_3h": len({rcv for t, rcv in r.sent_to_window if t >= three_hours_ago}),
+            "pair_txn_count_24h": len(pair),
+            "amount_to_sender_inflow_3h_ratio": amount / sender_inflow_3h if sender_inflow_3h > 1e-9 else NO_HISTORY,
+        }
+
         metadata = {
             "txn_ref": row.txn_ref,
             "sender_upi_id": sender,
@@ -306,7 +356,7 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
         }
         is_fraud = int(isinstance(row.true_label, str) and row.true_label != "")
 
-        rows.append({**metadata, **base, **behavioral, "is_fraud": is_fraud})
+        rows.append({**metadata, **base, **behavioral, **graph, "is_fraud": is_fraud})
 
         # Update state AFTER computing this row's features -- never let a
         # transaction see itself in its own history.
@@ -321,12 +371,15 @@ def build_features(transactions: pd.DataFrame, accounts: pd.DataFrame) -> pd.Dat
         s.sent_devices.add(device_id)
         s.last_sent_at = ts
         s.sent_window.append((ts, amount))
+        s.sent_to_window.append((ts, receiver))
+        pair.append(ts)
 
         r.received_count += 1
         r.received_sum += amount
         r.received_senders.add(sender)
         r.last_received_at = ts
         r.received_window.append((ts, sender))
+        r.received_amount_window.append((ts, amount))
 
         device_users.setdefault(device_id, set()).add(sender)
 

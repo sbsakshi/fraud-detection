@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models.enums import InterventionLevel
+from app.scoring.config import CONFIG_PATH
 
-CONFIG_PATH = Path(__file__).resolve().parent / "intervention_config.json"
 
 
 @dataclass(frozen=True)

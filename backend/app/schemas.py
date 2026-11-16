@@ -48,6 +48,18 @@ class AccountOut(BaseModel):
     created_at: datetime
 
 
+class AccountBrief(BaseModel):
+    """What a contact picker needs. Deliberately omits `true_label`, the synthetic ground truth."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    upi_id: str
+    owner_name: str
+    bank_name: str
+    account_type: AccountType
+    device_id: str | None
+
+
 class TransactionCreate(BaseModel):
     sender_upi_id: str
     receiver_upi_id: str
@@ -76,7 +88,8 @@ class ReasonCodeOut(BaseModel):
 
 
 class RiskScoreOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    # `model_version` starts with pydantic's reserved `model_` prefix; it is a plain data field here.
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     rule_score: float | None
     ml_score: float | None
@@ -84,6 +97,8 @@ class RiskScoreOut(BaseModel):
     fused_score: float
     confidence: float
     intervention_level: InterventionLevel
+    model_version: str | None = None
+    ladder_version: str | None = None
 
 
 class CaseOut(BaseModel):

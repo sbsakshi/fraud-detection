@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -22,6 +22,10 @@ class RiskScore(Base):
     intervention_level: Mapped[InterventionLevel] = mapped_column(
         Enum(InterventionLevel, name="intervention_level"), nullable=False
     )
+    # What produced this decision: the ML artifacts' training timestamp and a hash of the
+    # ladder + fusion-weight config. Null on rows scored before these columns existed.
+    model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ladder_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )

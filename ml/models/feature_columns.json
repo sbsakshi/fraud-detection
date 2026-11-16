@@ -40,7 +40,17 @@
     "sender_is_merchant",
     "receiver_is_merchant"
   ],
+  "graph_features": [
+    "sender_fan_in_3h",
+    "sender_fan_in_is_fresh_burst",
+    "receiver_fan_in_3h",
+    "receiver_fan_in_is_fresh_burst",
+    "receiver_fan_out_3h",
+    "pair_txn_count_24h",
+    "amount_to_sender_inflow_3h_ratio"
+  ],
   "nullable_features": [
+    "amount_to_sender_inflow_3h_ratio",
     "sender_account_age_days",
     "receiver_account_age_days",
     "amount_zscore_sender",
@@ -87,6 +97,13 @@
     "sender_minutes_since_first_seen",
     "receiver_minutes_since_first_seen",
     "sender_is_merchant",
-    "receiver_is_merchant"
+    "receiver_is_merchant",
+    "sender_fan_in_3h",
+    "sender_fan_in_is_fresh_burst",
+    "receiver_fan_in_3h",
+    "receiver_fan_in_is_fresh_burst",
+    "receiver_fan_out_3h",
+    "pair_txn_count_24h",
+    "amount_to_sender_inflow_3h_ratio"
   ]
 }

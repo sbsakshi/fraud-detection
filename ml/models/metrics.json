@@ -1,90 +1,90 @@
 {
-  "roc_auc": 0.9966,
-  "pr_auc": 0.9699,
-  "brier": 0.0078,
-  "alert_threshold": 0.1,
-  "recall_at_alert_threshold": 0.9391,
-  "precision_at_alert_threshold": 0.8499,
-  "normal_fpr_at_alert_threshold": 0.003,
+  "roc_auc": 0.9946,
+  "pr_auc": 0.9691,
+  "brier": 0.0071,
+  "alert_threshold": 0.1515,
+  "recall_at_alert_threshold": 0.9498,
+  "precision_at_alert_threshold": 0.8398,
+  "normal_fpr_at_alert_threshold": 0.0036,
   "per_label_flag_rate": {
-    "account_takeover": 0.9524,
+    "account_takeover": 0.9683,
     "gambling_network": 1.0,
-    "group_collection": 0.2143,
-    "innocent_bystander": 0.0756,
+    "group_collection": 0.2185,
+    "innocent_bystander": 0.1008,
     "large_new_payee": 0.2879,
     "layering_chain": 1.0,
-    "mule_network": 0.774,
-    "normal": 0.003,
-    "scam_recipient": 0.9726
+    "mule_network": 0.8014,
+    "normal": 0.0036,
+    "scam_recipient": 0.9863
   },
   "per_label_flag_rate_at_0.5": {
     "account_takeover": 0.9048,
     "gambling_network": 1.0,
-    "group_collection": 0.1345,
+    "group_collection": 0.0546,
     "innocent_bystander": 0.042,
-    "large_new_payee": 0.0909,
+    "large_new_payee": 0.0758,
     "layering_chain": 0.9917,
-    "mule_network": 0.6918,
-    "normal": 0.0013,
-    "scam_recipient": 0.9452
+    "mule_network": 0.6575,
+    "normal": 0.001,
+    "scam_recipient": 0.9315
   },
   "calibration": [
     {
       "bucket": "[0.00, 0.05)",
-      "n": 10111,
-      "mean_score": 0.0011,
-      "fraud_rate": 0.0025
+      "n": 10031,
+      "mean_score": 0.0007,
+      "fraud_rate": 0.002
     },
     {
       "bucket": "[0.05, 0.15)",
-      "n": 126,
-      "mean_score": 0.0772,
-      "fraud_rate": 0.1429
+      "n": 175,
+      "mean_score": 0.0704,
+      "fraud_rate": 0.0743
     },
     {
       "bucket": "[0.15, 0.35)",
-      "n": 35,
-      "mean_score": 0.2894,
-      "fraud_rate": 0.3429
+      "n": 79,
+      "mean_score": 0.2313,
+      "fraud_rate": 0.2532
     },
     {
       "bucket": "[0.35, 0.55)",
-      "n": 68,
-      "mean_score": 0.4852,
-      "fraud_rate": 0.3235
+      "n": 41,
+      "mean_score": 0.4332,
+      "fraud_rate": 0.3415
     },
     {
       "bucket": "[0.55, 0.70)",
-      "n": 3,
-      "mean_score": 0.6667,
-      "fraud_rate": 0.3333
+      "n": 41,
+      "mean_score": 0.6574,
+      "fraud_rate": 0.5122
     },
     {
       "bucket": "[0.70, 0.90)",
-      "n": 112,
-      "mean_score": 0.8256,
-      "fraud_rate": 0.7589
+      "n": 97,
+      "mean_score": 0.8635,
+      "fraud_rate": 0.866
     },
     {
       "bucket": "[0.90, 1.00)",
-      "n": 494,
-      "mean_score": 0.9946,
+      "n": 485,
+      "mean_score": 0.9985,
       "fraud_rate": 1.0
     }
   ],
   "isolation_forest": {
-    "roc_auc": 0.8953,
-    "pr_auc": 0.3377,
+    "roc_auc": 0.8902,
+    "pr_auc": 0.2927,
     "flag_rate_above_reason_percentile": {
-      "account_takeover": 0.5556,
-      "gambling_network": 0.3681,
+      "account_takeover": 0.3968,
+      "gambling_network": 0.3132,
       "group_collection": 0.0126,
       "innocent_bystander": 0.0,
-      "large_new_payee": 0.0758,
-      "layering_chain": 0.4917,
-      "mule_network": 0.2808,
-      "normal": 0.0375,
-      "scam_recipient": 0.4178
+      "large_new_payee": 0.0152,
+      "layering_chain": 0.4417,
+      "mule_network": 0.3288,
+      "normal": 0.0481,
+      "scam_recipient": 0.274
     }
   },
   "ablation": {
@@ -93,8 +93,12 @@
       "pr_auc": 0.7168
     },
     "base_plus_behavioral": {
-      "roc_auc": 0.9966,
-      "pr_auc": 0.9699
+      "roc_auc": 0.9972,
+      "pr_auc": 0.9727
+    },
+    "base_plus_behavioral_plus_graph": {
+      "roc_auc": 0.9946,
+      "pr_auc": 0.9691
     }
   },
   "leave_one_scenario_out": {
@@ -107,15 +111,15 @@
       "n_test": 182
     },
     "layering_chain": {
-      "recall": 0.925,
+      "recall": 0.9083,
       "n_test": 120
     },
     "mule_network": {
-      "recall": 0.7329,
+      "recall": 0.7055,
       "n_test": 146
     },
     "scam_recipient": {
-      "recall": 0.8288,
+      "recall": 0.863,
       "n_test": 146
     }
   },
